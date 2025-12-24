@@ -96,11 +96,42 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
-func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]domain.User, error) {
+func (r *UserRepository) List(ctx context.Context, limit, offset int, email string) ([]domain.User, error) {
 	// This operation is not cached - admin operation, not frequent
 	var users []domain.User
-	err := r.db.SelectContext(ctx, &users, queries.UserListQuery, limit, offset)
+
+	qb := newQueryBuilder(queries.UserListBaseQuery)
+
+	qb.AddWhere(fmt.Sprintf("role = $%d", qb.paramCounter), "client")
+
+	if email != "" {
+		emailPattern := "%" + email + "%"
+		qb.AddWhere(fmt.Sprintf("email ILIKE $%d", qb.paramCounter), emailPattern)
+	}
+
+	query, args := qb.Build("ORDER BY created_at DESC", fmt.Sprintf("LIMIT $%d OFFSET $%d", qb.paramCounter, qb.paramCounter+1))
+	args = append(args, limit, offset)
+
+	err := r.db.SelectContext(ctx, &users, query, args...)
 	return users, err
+}
+
+func (r *UserRepository) Count(ctx context.Context, email string) (int64, error) {
+	var count int64
+
+	qb := newQueryBuilder(queries.UserCountBaseQuery)
+	qb.AddWhere(fmt.Sprintf("role = $%d", qb.paramCounter), "client")
+	if email != "" {
+		emailPattern := "%" + email + "%"
+		qb.AddWhere(fmt.Sprintf("email ILIKE $%d", qb.paramCounter), emailPattern)
+	}
+
+	query, args := qb.Build("", "")
+
+	row := r.db.QueryRowContext(ctx, query, args...)
+	err := row.Scan(&count)
+
+	return count, err
 }
 
 func (r *UserRepository) CreateSession(ctx context.Context, session *domain.UserSession) error {

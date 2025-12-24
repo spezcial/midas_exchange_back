@@ -110,6 +110,9 @@ func apiV1(
 		r.Post("/exchange-rates", rateHandler.CreateRate)
 		r.Put("/exchange-rates/{id}", rateHandler.UpdateRate)
 		r.Delete("/exchange-rates/{id}", rateHandler.DeleteRate)
+
+		walletHandler := admin.NewWalletHandler(walletService)
+		r.Post("/wallets/deposit", walletHandler.ManualDeposit)
 	})
 
 	return r

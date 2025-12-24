@@ -36,3 +36,7 @@ func NewPostgres(dsn string) (*Postgres, error) {
 func (p *Postgres) Close() error {
 	return p.DB.Close()
 }
+
+func (p *Postgres) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
+	return p.DB.BeginTxx(ctx, nil)
+}

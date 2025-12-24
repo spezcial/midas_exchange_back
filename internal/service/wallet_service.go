@@ -35,8 +35,9 @@ func (s *WalletService) Deposit(ctx context.Context, userID int64, req *models.D
 	}
 
 	wallet, err := s.walletRepo.GetByUserAndCurrency(ctx, userID, currency.ID)
+
 	if err != nil {
-		return nil, fmt.Errorf("wallet not found: %w", err)
+		return nil, fmt.Errorf("failed to find wallet: %w", err)
 	}
 
 	tx := &domain.Transaction{

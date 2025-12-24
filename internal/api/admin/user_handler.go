@@ -29,13 +29,18 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	users, err := h.userService.ListUsers(r.Context(), limit, offset)
+	email := r.URL.Query().Get("email")
+
+	users, total, err := h.userService.ListUsers(r.Context(), limit, offset, email)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, users)
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users,
+		"total": total,
+	})
 }
 
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -46,11 +51,11 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userService.GetUser(r.Context(), userID)
+	userWithWallets, err := h.userService.GetUserWithWallets(r.Context(), userID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, user)
+	respondJSON(w, http.StatusOK, userWithWallets)
 }

@@ -9,7 +9,7 @@ const (
 
 	UserGetByIDQuery = `SELECT * FROM users WHERE id = $1`
 
-	UserGetByEmailQuery = `SELECT * FROM users WHERE email = $1`
+	UserGetByEmailQuery = `SELECT * FROM users WHERE email = $1 AND role = 'client'`
 
 	UserUpdateQuery = `
 		UPDATE users
@@ -18,7 +18,10 @@ const (
 		RETURNING updated_at
 `
 
-	UserListQuery = `SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	// Base queries for queryBuilder
+	UserListBaseQuery = `SELECT * FROM users`
+
+	UserCountBaseQuery = `SELECT COUNT(*) FROM users`
 
 	UserSessionCreateQuery = `
 		INSERT INTO user_sessions (user_id, refresh_token, expires_at)
@@ -30,4 +33,3 @@ const (
 
 	UserSessionDeleteQuery = `DELETE FROM user_sessions WHERE refresh_token = $1`
 )
-

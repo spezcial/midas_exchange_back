@@ -81,7 +81,7 @@ func main() {
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, walletRepo, jwtManager, emailService, cfg.App.BcryptCost, log)
-	userService := service.NewUserService(userRepo)
+	userService := service.NewUserService(userRepo, walletRepo)
 	walletService := service.NewWalletService(walletRepo, txRepo)
 	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService)
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)

@@ -94,7 +94,7 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, ba
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
 		return err
 	}
-
+	fmt.Println("INFO: WALLET ID: ", wallet.ID, walletID)
 	// Update in DB
 	if err := r.db.QueryRowContext(ctx, queries.WalletUpdateBalanceQuery, balance, locked, walletID).Scan(&wallet.UpdatedAt); err != nil {
 		return err
@@ -104,7 +104,6 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, ba
 	wallet.Balance = balance
 	wallet.Locked = locked
 
-	// Update cache immediately (no DB write - already done above)
 	r.cacheService.SetWallet(&wallet)
 
 	return nil
