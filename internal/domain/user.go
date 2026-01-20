@@ -11,17 +11,26 @@ const (
 	UserRoleAdmin  UserRole = "admin"
 )
 
+type AuthMethod string
+
+const (
+	AuthMethodRegular AuthMethod = "regular"
+	AuthMethodGoogle  AuthMethod = "google"
+)
+
 type User struct {
-	ID           int64     `db:"id" json:"id"`
-	Email        string    `db:"email" json:"email"`
-	PasswordHash string    `db:"password_hash" json:"-"`
-	FirstName    string    `db:"first_name" json:"first_name"`
-	LastName     string    `db:"last_name" json:"last_name"`
-	Role         UserRole  `db:"role" json:"role"`
-	IsActive     bool      `db:"is_active" json:"is_active"`
-	IsVerified   bool      `db:"is_verified" json:"is_verified"`
-	CreatedAt    time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
+	ID           int64      `db:"id" json:"id"`
+	Email        string     `db:"email" json:"email"`
+	PasswordHash string     `db:"password_hash" json:"-"`
+	FirstName    string     `db:"first_name" json:"first_name"`
+	LastName     string     `db:"last_name" json:"last_name"`
+	Role         UserRole   `db:"role" json:"role"`
+	IsActive     bool       `db:"is_active" json:"is_active"`
+	IsVerified   bool       `db:"is_verified" json:"is_verified"`
+	AuthMethod   AuthMethod `db:"auth_method" json:"auth_method"`
+	GoogleID     *string    `db:"google_id" json:"-"`
+	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 type UserSession struct {

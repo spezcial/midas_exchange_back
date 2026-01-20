@@ -37,4 +37,3 @@ const (
 
 	CurrencyGetAllQuery = `SELECT * FROM currencies WHERE is_active = true ORDER BY code`
 )
-

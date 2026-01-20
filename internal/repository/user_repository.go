@@ -24,10 +24,15 @@ func NewUserRepository(db *database.Postgres, cacheService *cache.CacheService) 
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *domain.User) error {
+	// Set default auth_method if not specified
+	if user.AuthMethod == "" {
+		user.AuthMethod = domain.AuthMethodRegular
+	}
+
 	if err := r.db.QueryRowContext(
 		ctx, queries.UserCreateQuery,
 		user.Email, user.PasswordHash, user.FirstName, user.LastName,
-		user.Role, user.IsActive, user.IsVerified,
+		user.Role, user.IsActive, user.IsVerified, user.AuthMethod, user.GoogleID,
 	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return err
 	}
@@ -180,4 +185,20 @@ func (r *UserRepository) DeleteSession(ctx context.Context, token string) error 
 	r.cacheService.DeleteSession(token)
 
 	return nil
+}
+
+func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (*domain.User, error) {
+	var user domain.User
+	err := r.db.GetContext(ctx, &user, queries.UserGetByGoogleIDQuery, googleID)
+	if err == sql.ErrNoRows {
+		return nil, nil // Return nil, nil to distinguish from errors
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache
+	r.cacheService.SetUser(&user)
+
+	return &user, nil
 }

@@ -21,10 +21,10 @@ func NewHealthHandler(rateUpdater *worker.RateUpdater) *HealthHandler {
 }
 
 type HealthResponse struct {
-	Status      string                   `json:"status"`
-	Timestamp   time.Time                `json:"timestamp"`
-	Uptime      string                   `json:"uptime"`
-	Workers     WorkersStatus            `json:"workers"`
+	Status    string        `json:"status"`
+	Timestamp time.Time     `json:"timestamp"`
+	Uptime    string        `json:"uptime"`
+	Workers   WorkersStatus `json:"workers"`
 }
 
 type WorkersStatus struct {

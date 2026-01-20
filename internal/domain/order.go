@@ -13,20 +13,20 @@ const (
 )
 
 type CurrencyExchange struct {
-	ID               int64                  `db:"id" json:"id"`
-	UID              string                 `db:"uid" json:"uid"`
-	UserID           int64                  `db:"user_id" json:"user_id"`
-	Email            string                 `db:"email" json:"email,omitempty"`
-	FromCurrencyID   int32                  `db:"from_currency_id" json:"from_currency_id"`
-	ToCurrencyID     int32                  `db:"to_currency_id" json:"to_currency_id"`
-	FromAmount       float64                `db:"from_amount" json:"from_amount"`
-	ToAmount         float64                `db:"to_amount" json:"to_amount"`
-	ToAmountWithFee  float64                `db:"to_amount_with_fee" json:"to_amount_with_fee"`
-	ExchangeRate     float64                `db:"exchange_rate" json:"exchange_rate"`
-	Fee              float64                `db:"fee" json:"fee"`
-	Status           CurrencyExchangeStatus `db:"status" json:"status"`
-	CreatedAt        time.Time              `db:"created_at" json:"created_at"`
-	UpdatedAt        time.Time              `db:"updated_at" json:"updated_at"`
+	ID              int64                  `db:"id" json:"id"`
+	UID             string                 `db:"uid" json:"uid"`
+	UserID          int64                  `db:"user_id" json:"user_id"`
+	Email           string                 `db:"email" json:"email,omitempty"`
+	FromCurrencyID  int32                  `db:"from_currency_id" json:"from_currency_id"`
+	ToCurrencyID    int32                  `db:"to_currency_id" json:"to_currency_id"`
+	FromAmount      float64                `db:"from_amount" json:"from_amount"`
+	ToAmount        float64                `db:"to_amount" json:"to_amount"`
+	ToAmountWithFee float64                `db:"to_amount_with_fee" json:"to_amount_with_fee"`
+	ExchangeRate    float64                `db:"exchange_rate" json:"exchange_rate"`
+	Fee             float64                `db:"fee" json:"fee"`
+	Status          CurrencyExchangeStatus `db:"status" json:"status"`
+	CreatedAt       time.Time              `db:"created_at" json:"created_at"`
+	UpdatedAt       time.Time              `db:"updated_at" json:"updated_at"`
 }
 
 type CurrencyExchangeWithDetails struct {

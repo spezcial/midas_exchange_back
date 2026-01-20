@@ -2,14 +2,16 @@ package queries
 
 const (
 	UserCreateQuery = `
-		INSERT INTO users (email, password_hash, first_name, last_name, role, is_active, is_verified)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO users (email, password_hash, first_name, last_name, role, is_active, is_verified, auth_method, google_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at, updated_at
 `
 
 	UserGetByIDQuery = `SELECT * FROM users WHERE id = $1`
 
 	UserGetByEmailQuery = `SELECT * FROM users WHERE email = $1 AND role = 'client'`
+
+	UserGetByGoogleIDQuery = `SELECT * FROM users WHERE google_id = $1`
 
 	UserUpdateQuery = `
 		UPDATE users

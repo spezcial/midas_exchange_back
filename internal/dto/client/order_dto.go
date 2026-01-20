@@ -8,20 +8,20 @@ import (
 
 // ExchangeDTO represents a currency exchange with all details for client view
 type ExchangeDTO struct {
-	ID              int64                          `json:"id"`
-	UID             string                         `json:"uid"`
-	FromCurrencyID  int32                          `json:"from_currency_id"`
-	ToCurrencyID    int32                          `json:"to_currency_id"`
-	FromCurrency    CurrencyDTO                    `json:"from_currency"`
-	ToCurrency      CurrencyDTO                    `json:"to_currency"`
-	FromAmount      float64                        `json:"from_amount"`
-	ToAmount        float64                        `json:"to_amount"`
-	ToAmountWithFee float64                        `json:"to_amount_with_fee"`
-	ExchangeRate    float64                        `json:"exchange_rate"`
-	Fee             float64                        `json:"fee"`
-	Status          domain.CurrencyExchangeStatus  `json:"status"`
-	CreatedAt       time.Time                      `json:"created_at"`
-	UpdatedAt       time.Time                      `json:"updated_at"`
+	ID              int64                         `json:"id"`
+	UID             string                        `json:"uid"`
+	FromCurrencyID  int32                         `json:"from_currency_id"`
+	ToCurrencyID    int32                         `json:"to_currency_id"`
+	FromCurrency    CurrencyDTO                   `json:"from_currency"`
+	ToCurrency      CurrencyDTO                   `json:"to_currency"`
+	FromAmount      float64                       `json:"from_amount"`
+	ToAmount        float64                       `json:"to_amount"`
+	ToAmountWithFee float64                       `json:"to_amount_with_fee"`
+	ExchangeRate    float64                       `json:"exchange_rate"`
+	Fee             float64                       `json:"fee"`
+	Status          domain.CurrencyExchangeStatus `json:"status"`
+	CreatedAt       time.Time                     `json:"created_at"`
+	UpdatedAt       time.Time                     `json:"updated_at"`
 }
 
 // CurrencyDTO represents currency information

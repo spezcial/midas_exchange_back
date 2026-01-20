@@ -18,6 +18,7 @@ type Config struct {
 	App       AppConfig
 	Payment   PaymentConfig
 	Worker    WorkerConfig
+	OAuth     OAuthConfig
 }
 
 type ServerConfig struct {
@@ -82,6 +83,13 @@ type WorkerConfig struct {
 	RateUpdateTimeout  time.Duration
 	RateUpdateRetries  int
 	RateRetryBackoff   time.Duration
+}
+
+type OAuthConfig struct {
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURI  string
+	StateExpiry        time.Duration
 }
 
 func (c *Config) GetDSN() string {
@@ -163,6 +171,12 @@ func Load() (*Config, error) {
 			RateUpdateTimeout:  parseDuration(getEnv("WORKER_RATE_UPDATE_TIMEOUT", "30s"), 30*time.Second),
 			RateUpdateRetries:  parseInt(getEnv("WORKER_RATE_UPDATE_RETRIES", "3"), 3),
 			RateRetryBackoff:   parseDuration(getEnv("WORKER_RATE_RETRY_BACKOFF", "5s"), 5*time.Second),
+		},
+		OAuth: OAuthConfig{
+			GoogleClientID:     getEnv("GOOGLE_OAUTH_CLIENT_ID", ""),
+			GoogleClientSecret: getEnv("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+			GoogleRedirectURI:  getEnv("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:5173/auth/google/callback"),
+			StateExpiry:        parseDuration(getEnv("GOOGLE_OAUTH_STATE_EXPIRY", "10m"), 10*time.Minute),
 		},
 	}
 

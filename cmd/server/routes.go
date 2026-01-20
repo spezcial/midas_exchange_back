@@ -25,6 +25,7 @@ func setupRouter(
 	walletService *service.WalletService,
 	exchangeService *service.CurrencyExchangeService,
 	exchangeRateService *service.ExchangeRatesService,
+	oauthService *service.OAuthService,
 	rateUpdater *worker.RateUpdater,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -38,7 +39,7 @@ func setupRouter(
 	r.Get("/health/live", healthHandler.Live)
 	r.Get("/health/ready", healthHandler.Ready)
 
-	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService))
+	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService))
 
 	return r
 }
@@ -52,6 +53,7 @@ func apiV1(
 	walletService *service.WalletService,
 	exchangeService *service.CurrencyExchangeService,
 	exchangeRateService *service.ExchangeRatesService,
+	oauthService *service.OAuthService,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -68,6 +70,11 @@ func apiV1(
 	r.Post("/auth/login", authHandler.Login)
 	r.Post("/auth/refresh", authHandler.RefreshToken)
 	r.Post("/auth/logout", authHandler.Logout)
+
+	// Public OAuth endpoints
+	oauthHandler := client.NewOAuthHandler(oauthService)
+	r.Get("/auth/google/url", oauthHandler.GetGoogleAuthURL)
+	r.Post("/auth/google/callback", oauthHandler.GoogleCallback)
 
 	// Public exchange rates endpoint
 	exchangePairHandler := client.NewExchangePairHandler(exchangeRateService)

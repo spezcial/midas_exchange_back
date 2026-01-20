@@ -18,4 +18,3 @@ type AdminDepositRequest struct {
 	TxHash       string  `json:"tx_hash"`
 	Description  string  `json:"description"`
 }
-

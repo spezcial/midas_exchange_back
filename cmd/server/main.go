@@ -78,6 +78,7 @@ func main() {
 	exchangeRepo := repository.NewCurrencyExchangeRepository(db, cacheService)
 	txRepo := repository.NewTransactionRepository(db)
 	exchangeRateRepo := repository.NewExchangeRateRepository(db, cacheService)
+	oauthRepo := repository.NewOAuthRepository(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, walletRepo, jwtManager, emailService, cfg.App.BcryptCost, log)
@@ -85,6 +86,7 @@ func main() {
 	walletService := service.NewWalletService(walletRepo, txRepo)
 	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService)
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)
+	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
 
 	wsService := NewWebSocketService(exchangeRatesService, log, cfg.WebSocket.AllowedOrigins, cfg.WebSocket.ReadBufferSize, cfg.WebSocket.WriteBufferSize)
 
@@ -108,6 +110,7 @@ func main() {
 		walletService,
 		exchangeService,
 		exchangeRatesService,
+		oauthService,
 		rateUpdater,
 	)
 
