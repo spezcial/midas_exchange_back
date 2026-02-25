@@ -20,6 +20,19 @@ const (
 		RETURNING updated_at
 `
 
+	UserUpdateProfileQuery = `
+		UPDATE users
+		SET first_name = $1, last_name = $2, middle_name = $3, phone = $4, kyc_level = $5, updated_at = NOW()
+		WHERE id = $6
+		RETURNING updated_at
+`
+
+	UserUpdatePasswordQuery = `
+		UPDATE users
+		SET password_hash = $1, updated_at = NOW()
+		WHERE id = $2
+`
+
 	// Base queries for queryBuilder
 	UserListBaseQuery = `SELECT * FROM users`
 

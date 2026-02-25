@@ -1,0 +1,2 @@
+ALTER TABLE users DROP COLUMN IF EXISTS middle_name;
+ALTER TABLE users DROP COLUMN IF EXISTS kyc_level;

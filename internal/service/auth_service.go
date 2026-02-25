@@ -125,6 +125,28 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
 	return s.userRepo.DeleteSession(ctx, refreshToken)
 }
 
+func (s *AuthService) ChangePassword(ctx context.Context, userID int64, currentPassword, newPassword string) error {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	if user.AuthMethod != domain.AuthMethodRegular {
+		return fmt.Errorf("password change is not available for OAuth accounts")
+	}
+
+	if !auth.CheckPassword(currentPassword, user.PasswordHash) {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	newHash, err := auth.HashPassword(newPassword, s.bcryptCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	return s.userRepo.UpdatePassword(ctx, userID, newHash)
+}
+
 func (s *AuthService) generateTokens(ctx context.Context, user *domain.User) (*models.AuthResponse, error) {
 	return s.generateTokensWithRememberMe(ctx, user, false)
 }

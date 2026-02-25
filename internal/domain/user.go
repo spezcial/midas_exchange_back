@@ -24,6 +24,9 @@ type User struct {
 	PasswordHash string     `db:"password_hash" json:"-"`
 	FirstName    string     `db:"first_name" json:"first_name"`
 	LastName     string     `db:"last_name" json:"last_name"`
+	MiddleName   *string    `db:"middle_name" json:"middle_name"`
+	Phone        *string    `db:"phone" json:"phone"`
+	KycLevel     int        `db:"kyc_level" json:"kyc_level"`
 	Role         UserRole   `db:"role" json:"role"`
 	IsActive     bool       `db:"is_active" json:"is_active"`
 	IsVerified   bool       `db:"is_verified" json:"is_verified"`

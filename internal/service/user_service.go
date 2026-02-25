@@ -72,3 +72,56 @@ func (s *UserService) ListUsers(ctx context.Context, limit, offset int, email st
 func (s *UserService) UpdateUser(ctx context.Context, user *domain.User) error {
 	return s.userRepo.Update(ctx, user)
 }
+
+type UserProfile struct {
+	ID         int64   `json:"id"`
+	Email      string  `json:"email"`
+	FirstName  string  `json:"first_name"`
+	LastName   string  `json:"last_name"`
+	MiddleName *string `json:"middle_name"`
+	Phone      *string `json:"phone"`
+	KycLevel   int     `json:"kyc_level"`
+}
+
+func (s *UserService) GetProfile(ctx context.Context, userID int64) (*UserProfile, error) {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &UserProfile{
+		ID:         user.ID,
+		Email:      user.Email,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		MiddleName: user.MiddleName,
+		Phone:      user.Phone,
+		KycLevel:   user.KycLevel,
+	}, nil
+}
+
+func (s *UserService) UpdateProfile(ctx context.Context, userID int64, firstName, lastName string, middleName, phone *string, kycLevel int) (*UserProfile, error) {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	user.FirstName = firstName
+	user.LastName = lastName
+	user.MiddleName = middleName
+	user.Phone = phone
+	user.KycLevel = kycLevel
+
+	if err := s.userRepo.UpdateProfile(ctx, user); err != nil {
+		return nil, err
+	}
+
+	return &UserProfile{
+		ID:         user.ID,
+		Email:      user.Email,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		MiddleName: user.MiddleName,
+		Phone:      user.Phone,
+		KycLevel:   user.KycLevel,
+	}, nil
+}

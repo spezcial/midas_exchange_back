@@ -84,6 +84,12 @@ func apiV1(
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware.Authenticate)
 
+		r.Put("/auth/password", authHandler.ChangePassword)
+
+		profileHandler := client.NewProfileHandler(userService)
+		r.Get("/profile", profileHandler.GetProfile)
+		r.Put("/profile", profileHandler.UpdateProfile)
+
 		walletHandler := client.NewWalletHandler(walletService)
 		r.Get("/wallet/currencies", walletHandler.GetAllCurrencies)
 		r.Get("/wallets", walletHandler.GetWallets)
@@ -106,6 +112,9 @@ func apiV1(
 		userHandler := admin.NewUserHandler(userService)
 		r.Get("/users", userHandler.ListUsers)
 		r.Get("/users/{id}", userHandler.GetUser)
+		r.Get("/users/{id}/profile", userHandler.GetProfile)
+		r.Post("/users/{id}/profile", userHandler.SetProfile)
+		r.Put("/users/{id}/profile", userHandler.UpdateProfile)
 
 		exchangeHandler := admin.NewExchangeHandler(exchangeService)
 		r.Get("/exchanges", exchangeHandler.ListExchanges)

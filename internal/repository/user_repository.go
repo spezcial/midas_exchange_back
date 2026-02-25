@@ -101,6 +101,30 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
+func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash string) error {
+	if _, err := r.db.ExecContext(ctx, queries.UserUpdatePasswordQuery, passwordHash, userID); err != nil {
+		return err
+	}
+
+	// Invalidate cache so next read fetches fresh data with new hash
+	r.cacheService.InvalidateUser(userID)
+
+	return nil
+}
+
+func (r *UserRepository) UpdateProfile(ctx context.Context, user *domain.User) error {
+	if err := r.db.QueryRowContext(
+		ctx, queries.UserUpdateProfileQuery,
+		user.FirstName, user.LastName, user.MiddleName, user.Phone, user.KycLevel, user.ID,
+	).Scan(&user.UpdatedAt); err != nil {
+		return err
+	}
+
+	r.cacheService.SetUser(user)
+
+	return nil
+}
+
 func (r *UserRepository) List(ctx context.Context, limit, offset int, email string) ([]domain.User, error) {
 	// This operation is not cached - admin operation, not frequent
 	var users []domain.User
