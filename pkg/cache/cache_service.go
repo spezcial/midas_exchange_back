@@ -70,12 +70,14 @@ func (cs *CacheService) GetUserByEmail(email string) (*domain.User, bool) {
 }
 
 func (cs *CacheService) SetUser(user *domain.User) {
+	userCopy := *user // store a copy so external mutations to the original pointer don't corrupt the cache
+
 	keyByID := fmt.Sprintf("user:%d", user.ID)
 	keyByEmail := fmt.Sprintf("user:email:%s", user.Email)
 
 	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(keyByID, user, NoExpiration)
-	cs.cache.Set(keyByEmail, user, NoExpiration)
+	cs.cache.Set(keyByID, &userCopy, NoExpiration)
+	cs.cache.Set(keyByEmail, &userCopy, NoExpiration)
 }
 
 // Currency cache operations

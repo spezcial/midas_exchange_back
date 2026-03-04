@@ -7,13 +7,13 @@ import (
 type UserRole string
 
 const (
-	UserRoleClient       UserRole = "client"
-	UserRoleAdmin        UserRole = "admin"
-	UserRoleSuperAdmin   UserRole = "super_admin"
-	UserRoleOperator     UserRole = "operator"
-	UserRoleSupport      UserRole = "support"
+	UserRoleClient        UserRole = "client"
+	UserRoleAdmin         UserRole = "admin"
+	UserRoleSuperAdmin    UserRole = "super_admin"
+	UserRoleOperator      UserRole = "operator"
+	UserRoleSupport       UserRole = "support"
 	UserRoleAMLSpecialist UserRole = "aml_specialist"
-	UserRoleCompliance   UserRole = "compliance"
+	UserRoleCompliance    UserRole = "compliance"
 )
 
 func (r UserRole) IsStaffRole() bool {

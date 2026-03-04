@@ -26,6 +26,7 @@ func setupRouter(
 	exchangeService *service.CurrencyExchangeService,
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
+	otcService *service.OTCService,
 	rateUpdater *worker.RateUpdater,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -39,7 +40,7 @@ func setupRouter(
 	r.Get("/health/live", healthHandler.Live)
 	r.Get("/health/ready", healthHandler.Ready)
 
-	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService))
+	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService))
 
 	return r
 }
@@ -54,6 +55,7 @@ func apiV1(
 	exchangeService *service.CurrencyExchangeService,
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
+	otcService *service.OTCService,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -102,6 +104,18 @@ func apiV1(
 		r.Get("/exchanges", exchangeHandler.GetExchanges)
 		r.Get("/exchanges/{id}", exchangeHandler.GetExchange)
 		r.Delete("/exchanges/{id}", exchangeHandler.CancelExchange)
+
+		otcHandler := client.NewOTCHandler(otcService)
+		r.Route("/otc", func(r chi.Router) {
+			r.Post("/orders", otcHandler.CreateOrder)
+			r.Get("/orders", otcHandler.ListOrders)
+			r.Get("/orders/{uid}", otcHandler.GetOrder)
+			r.Post("/orders/{uid}/messages", otcHandler.SendMessage)
+			r.Post("/orders/{uid}/offers", otcHandler.SendOffer)
+			r.Put("/orders/{uid}/offers/{messageID}/accept", otcHandler.AcceptOffer)
+			r.Put("/orders/{uid}/offers/{messageID}/reject", otcHandler.RejectOffer)
+			r.Delete("/orders/{uid}", otcHandler.CancelOrder)
+		})
 	})
 
 	// Admin endpoints
@@ -138,6 +152,22 @@ func apiV1(
 			r.Post("/staff", staffHandler.CreateStaff)
 			r.Put("/staff/{id}", staffHandler.UpdateStaff)
 			r.Delete("/staff/{id}", staffHandler.DeactivateStaff)
+		})
+
+		// OTC orders (admin + operator access)
+		otcAdminHandler := admin.NewOTCHandler(otcService)
+		r.Route("/otc", func(r chi.Router) {
+			r.Use(authMiddleware.RequireRole("admin", "super_admin", "operator"))
+			r.Get("/orders", otcAdminHandler.ListOrders)
+			r.Get("/orders/{uid}", otcAdminHandler.GetOrder)
+			r.Put("/orders/{uid}/take", otcAdminHandler.TakeOrder)
+			r.Post("/orders/{uid}/messages", otcAdminHandler.SendMessage)
+			r.Post("/orders/{uid}/offers", otcAdminHandler.SendOffer)
+			r.Put("/orders/{uid}/offers/{id}/accept", otcAdminHandler.AcceptOffer)
+			r.Put("/orders/{uid}/offers/{id}/reject", otcAdminHandler.RejectOffer)
+			r.Put("/orders/{uid}/payment-received", otcAdminHandler.ConfirmPaymentReceived)
+			r.Put("/orders/{uid}/complete", otcAdminHandler.CompleteOrder)
+			r.Delete("/orders/{uid}", otcAdminHandler.CancelOrder)
 		})
 	})
 

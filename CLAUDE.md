@@ -74,7 +74,7 @@ All roles share the same `users` table — staff accounts just have a different 
 | `client` | End-user; created via `/auth/register`; has wallets |
 | `admin` | Admin panel access |
 | `super_admin` | Full admin access + staff management |
-| `operator` | OTC order operator (future) |
+| `operator` | OTC order operator; manages OTC orders |
 | `support` | Support tickets (future) |
 | `aml_specialist` | AML review (future) |
 | `compliance` | Compliance review (future) |
@@ -103,9 +103,21 @@ All roles share the same `users` table — staff accounts just have a different 
 | PUT | `/staff/{id}` | Update staff name/role/is_active |
 | DELETE | `/staff/{id}` | Deactivate staff (sets `is_active=false`) |
 
+### OTC Workflow
+
+Clients with KYC level ≥ 2 can create OTC orders. Operators negotiate via in-order chat (text + offer cards). Offer acceptance → `awaiting_payment` with 30-min deadline. Payment is external; operator confirms receipt, then marks complete.
+
+**Status machine:** `awaiting_review` → `negotiating` → `awaiting_payment` → `payment_received` → `completed`. Cancelled or expired are terminal. Expiry is lazy (set on `GetByUID` if deadline passed).
+
+**Client OTC endpoints** (`/api/v1/otc/`): create, list, get order; send messages/offers; accept/reject offers; cancel.
+**Admin/Operator OTC endpoints** (`/api/v1/admin/otc/`): list/get all orders; take, message, offer, accept/reject, confirm payment, complete, cancel.
+
+Key files: `internal/domain/otc.go`, `internal/service/otc_service.go`, `internal/repository/otc_repository.go`, `const/queries/otc_repo.go`, `internal/service/notification_service.go` (NoOp stub).
+
 ### Database
 
 PostgreSQL with golang-migrate. Migrations in `migrations/` directory:
 - `000001_init_schema` - Core tables (users, wallets, currencies, exchanges, transactions)
 - `000002_seed_currencies` - Pre-seeded crypto (BTC, ETH, USDT, etc.) and fiat (KZT, USD, EUR)
 - `000006_add_roles` - CHECK constraint on `users.role` for all valid role values
+- `000007_otc` - `otc_orders` and `otc_messages` tables

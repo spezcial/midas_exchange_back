@@ -190,11 +190,12 @@ func (s *AuthService) generateTokensWithRememberMe(ctx context.Context, user *do
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	user.PasswordHash = ""
+	userResponse := *user // copy before clearing sensitive field; never mutate the original pointer (it may be cached)
+	userResponse.PasswordHash = ""
 
 	return &models.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		User:         user,
+		User:         &userResponse,
 	}, nil
 }

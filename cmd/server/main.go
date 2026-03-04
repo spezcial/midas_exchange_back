@@ -88,6 +88,10 @@ func main() {
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)
 	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
 
+	notifService := &service.NoOpNotificationService{}
+	otcRepo := repository.NewOTCRepository(db)
+	otcService := service.NewOTCService(otcRepo, userRepo, notifService)
+
 	wsService := NewWebSocketService(exchangeRatesService, log, cfg.WebSocket.AllowedOrigins, cfg.WebSocket.ReadBufferSize, cfg.WebSocket.WriteBufferSize)
 
 	// Initialize background exchange rate updater worker
@@ -111,6 +115,7 @@ func main() {
 		exchangeService,
 		exchangeRatesService,
 		oauthService,
+		otcService,
 		rateUpdater,
 	)
 
