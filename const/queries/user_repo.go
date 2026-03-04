@@ -11,6 +11,15 @@ const (
 
 	UserGetByEmailQuery = `SELECT * FROM users WHERE email = $1 AND role = 'client'`
 
+	UserGetByEmailAnyRoleQuery = `SELECT * FROM users WHERE email = $1`
+
+	UserUpdateStaffQuery = `
+		UPDATE users
+		SET first_name = $1, last_name = $2, role = $3, is_active = $4, updated_at = NOW()
+		WHERE id = $5
+		RETURNING updated_at
+`
+
 	UserGetByGoogleIDQuery = `SELECT * FROM users WHERE google_id = $1`
 
 	UserUpdateQuery = `

@@ -107,7 +107,7 @@ func apiV1(
 	// Admin endpoints
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(authMiddleware.Authenticate)
-		r.Use(authMiddleware.RequireRole("admin"))
+		r.Use(authMiddleware.RequireRole("admin", "super_admin"))
 
 		userHandler := admin.NewUserHandler(userService)
 		r.Get("/users", userHandler.ListUsers)
@@ -129,6 +129,16 @@ func apiV1(
 
 		walletHandler := admin.NewWalletHandler(walletService)
 		r.Post("/wallets/deposit", walletHandler.ManualDeposit)
+
+		// Super-admin only: staff management
+		staffHandler := admin.NewStaffHandler(userService)
+		r.Route("/super", func(r chi.Router) {
+			r.Use(authMiddleware.RequireRole("super_admin"))
+			r.Get("/staff", staffHandler.ListStaff)
+			r.Post("/staff", staffHandler.CreateStaff)
+			r.Put("/staff/{id}", staffHandler.UpdateStaff)
+			r.Delete("/staff/{id}", staffHandler.DeactivateStaff)
+		})
 	})
 
 	return r

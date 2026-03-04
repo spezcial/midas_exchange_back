@@ -7,9 +7,27 @@ import (
 type UserRole string
 
 const (
-	UserRoleClient UserRole = "client"
-	UserRoleAdmin  UserRole = "admin"
+	UserRoleClient       UserRole = "client"
+	UserRoleAdmin        UserRole = "admin"
+	UserRoleSuperAdmin   UserRole = "super_admin"
+	UserRoleOperator     UserRole = "operator"
+	UserRoleSupport      UserRole = "support"
+	UserRoleAMLSpecialist UserRole = "aml_specialist"
+	UserRoleCompliance   UserRole = "compliance"
 )
+
+func (r UserRole) IsStaffRole() bool {
+	return r != UserRoleClient
+}
+
+func (r UserRole) IsValidRole() bool {
+	switch r {
+	case UserRoleClient, UserRoleAdmin, UserRoleSuperAdmin,
+		UserRoleOperator, UserRoleSupport, UserRoleAMLSpecialist, UserRoleCompliance:
+		return true
+	}
+	return false
+}
 
 type AuthMethod string
 

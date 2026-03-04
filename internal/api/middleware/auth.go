@@ -55,15 +55,21 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-func (m *AuthMiddleware) RequireRole(role string) func(http.Handler) http.Handler {
+func (m *AuthMiddleware) RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userRole, ok := r.Context().Value(UserRoleKey).(string)
-			if !ok || userRole != role {
+			if !ok {
 				respondJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient permissions"})
 				return
 			}
-			next.ServeHTTP(w, r)
+			for _, role := range roles {
+				if userRole == role {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			respondJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient permissions"})
 		})
 	}
 }

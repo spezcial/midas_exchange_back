@@ -211,6 +211,77 @@ func (r *UserRepository) DeleteSession(ctx context.Context, token string) error 
 	return nil
 }
 
+func (r *UserRepository) GetByEmailAnyRole(ctx context.Context, email string) (*domain.User, error) {
+	// Check cache first
+	if user, found := r.cacheService.GetUserByEmail(email); found {
+		return user, nil
+	}
+
+	// Cache miss - fetch from DB
+	var user domain.User
+	err := r.db.GetContext(ctx, &user, queries.UserGetByEmailAnyRoleQuery, email)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Update cache
+	r.cacheService.SetUser(&user)
+
+	return &user, nil
+}
+
+func (r *UserRepository) ListStaff(ctx context.Context, limit, offset int, email string) ([]domain.User, error) {
+	var users []domain.User
+
+	qb := newQueryBuilder(queries.UserListBaseQuery)
+	qb.AddWhere(fmt.Sprintf("role != $%d", qb.paramCounter), "client")
+
+	if email != "" {
+		emailPattern := "%" + email + "%"
+		qb.AddWhere(fmt.Sprintf("email ILIKE $%d", qb.paramCounter), emailPattern)
+	}
+
+	query, args := qb.Build("ORDER BY created_at DESC", fmt.Sprintf("LIMIT $%d OFFSET $%d", qb.paramCounter, qb.paramCounter+1))
+	args = append(args, limit, offset)
+
+	err := r.db.SelectContext(ctx, &users, query, args...)
+	return users, err
+}
+
+func (r *UserRepository) CountStaff(ctx context.Context, email string) (int64, error) {
+	var count int64
+
+	qb := newQueryBuilder(queries.UserCountBaseQuery)
+	qb.AddWhere(fmt.Sprintf("role != $%d", qb.paramCounter), "client")
+	if email != "" {
+		emailPattern := "%" + email + "%"
+		qb.AddWhere(fmt.Sprintf("email ILIKE $%d", qb.paramCounter), emailPattern)
+	}
+
+	query, args := qb.Build("", "")
+
+	row := r.db.QueryRowContext(ctx, query, args...)
+	err := row.Scan(&count)
+
+	return count, err
+}
+
+func (r *UserRepository) UpdateStaff(ctx context.Context, user *domain.User) error {
+	if err := r.db.QueryRowContext(
+		ctx, queries.UserUpdateStaffQuery,
+		user.FirstName, user.LastName, user.Role, user.IsActive, user.ID,
+	).Scan(&user.UpdatedAt); err != nil {
+		return err
+	}
+
+	r.cacheService.SetUser(user)
+
+	return nil
+}
+
 func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (*domain.User, error) {
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, queries.UserGetByGoogleIDQuery, googleID)

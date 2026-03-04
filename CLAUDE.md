@@ -65,6 +65,25 @@ pkg/
 - **WebSocket**: Real-time exchange rate updates via `/ws` endpoint
 - **Graceful Shutdown**: Proper cleanup of workers, connections, and server
 
+### Roles (RBAC)
+
+All roles share the same `users` table — staff accounts just have a different `role` value and no wallets.
+
+| Role | Description |
+|---|---|
+| `client` | End-user; created via `/auth/register`; has wallets |
+| `admin` | Admin panel access |
+| `super_admin` | Full admin access + staff management |
+| `operator` | OTC order operator (future) |
+| `support` | Support tickets (future) |
+| `aml_specialist` | AML review (future) |
+| `compliance` | Compliance review (future) |
+
+- `UserRole.IsStaffRole()` — true for any non-client role
+- `UserRole.IsValidRole()` — validates against the known set
+- `RequireRole(roles ...string)` — variadic middleware, allows any of the listed roles
+- Staff log in via the same `/api/v1/auth/login` endpoint
+
 ### API Structure
 
 - `/health`, `/health/live`, `/health/ready` - Health checks
@@ -72,10 +91,21 @@ pkg/
 - `/api/v1/auth/*` - Public auth endpoints
 - `/api/v1/exchange-rates` - Public rates
 - `/api/v1/*` - Protected client endpoints (JWT required)
-- `/api/v1/admin/*` - Admin endpoints (JWT + admin role required)
+- `/api/v1/admin/*` - Admin endpoints (JWT + `admin` or `super_admin` role required)
+- `/api/v1/admin/super/*` - Super-admin only: staff CRUD
+
+### Staff Management Endpoints (`/api/v1/admin/super/`)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/staff` | List all staff (non-client users) |
+| POST | `/staff` | Create staff account; returns `{staff, temp_password}` |
+| PUT | `/staff/{id}` | Update staff name/role/is_active |
+| DELETE | `/staff/{id}` | Deactivate staff (sets `is_active=false`) |
 
 ### Database
 
 PostgreSQL with golang-migrate. Migrations in `migrations/` directory:
 - `000001_init_schema` - Core tables (users, wallets, currencies, exchanges, transactions)
 - `000002_seed_currencies` - Pre-seeded crypto (BTC, ETH, USDT, etc.) and fiat (KZT, USD, EUR)
+- `000006_add_roles` - CHECK constraint on `users.role` for all valid role values
