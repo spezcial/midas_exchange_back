@@ -89,8 +89,8 @@ func main() {
 	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
 
 	notifService := &service.NoOpNotificationService{}
-	otcRepo := repository.NewOTCRepository(db)
-	otcService := service.NewOTCService(otcRepo, userRepo, notifService)
+	otcRepo := repository.NewOTCRepository(db, cacheService)
+	otcService := service.NewOTCService(otcRepo, userRepo, walletRepo, notifService)
 
 	wsService := NewWebSocketService(exchangeRatesService, log, cfg.WebSocket.AllowedOrigins, cfg.WebSocket.ReadBufferSize, cfg.WebSocket.WriteBufferSize)
 

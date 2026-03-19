@@ -9,14 +9,58 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 )
 
-type OTCService struct {
-	otcRepo  *repository.OTCRepository
-	userRepo *repository.UserRepository
-	notif    NotificationService
+// otcOrderRepo is the subset of OTCRepository used by OTCService.
+type otcOrderRepo interface {
+	Create(ctx context.Context, order *domain.OTCOrder) error
+	GetByUID(ctx context.Context, uid string) (*domain.OTCOrderDetail, error)
+	GetConfigs(ctx context.Context) ([]domain.OTCConfig, error)
+	GetConfigByID(ctx context.Context, id int64) (*domain.OTCConfig, error)
+	CreateConfig(ctx context.Context, config *domain.OTCConfig) error
+	UpdateConfig(ctx context.Context, config *domain.OTCConfig) error
+	DeleteConfig(ctx context.Context, id int64) error
+	ListByUser(ctx context.Context, userID int64, limit, offset int, status string) ([]domain.OTCOrder, int64, error)
+	ListAll(ctx context.Context, limit, offset int, status, email string) ([]domain.OTCOrder, int64, error)
+	Take(ctx context.Context, orderID, operatorID int64) error
+	CreateMessage(ctx context.Context, msg *domain.OTCMessage) error
+	GetMessageByID(ctx context.Context, msgID int64) (*domain.OTCMessage, error)
+	UpdateOfferStatus(ctx context.Context, msgID int64, status domain.OTCOfferStatus) error
+	Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt float64, deadline time.Time) error
+	Cancel(ctx context.Context, orderID int64, reason, cancelledBy string) error
+	SetPaymentReceived(ctx context.Context, orderID int64) error
+	Complete(ctx context.Context, orderID int64) error
 }
 
-func NewOTCService(otcRepo *repository.OTCRepository, userRepo *repository.UserRepository, notif NotificationService) *OTCService {
-	return &OTCService{otcRepo: otcRepo, userRepo: userRepo, notif: notif}
+// otcUserRepo is the subset of UserRepository used by OTCService.
+type otcUserRepo interface {
+	GetByID(ctx context.Context, id int64) (*domain.User, error)
+}
+
+// otcWalletRepo is the subset of WalletRepository used by OTCService.
+type otcWalletRepo interface {
+	GetByUserAndCurrency(ctx context.Context, userID int64, currencyID int32) (*domain.Wallet, error)
+	UpdateBalance(ctx context.Context, walletID int64, balance, locked float64) error
+	AtomicDeduct(ctx context.Context, walletID int64, amount float64) error
+}
+
+type OTCService struct {
+	otcRepo    otcOrderRepo
+	userRepo   otcUserRepo
+	walletRepo otcWalletRepo
+	notif      NotificationService
+}
+
+func NewOTCService(
+	otcRepo *repository.OTCRepository,
+	userRepo *repository.UserRepository,
+	walletRepo *repository.WalletRepository,
+	notif NotificationService,
+) *OTCService {
+	return &OTCService{
+		otcRepo:    otcRepo,
+		userRepo:   userRepo,
+		walletRepo: walletRepo,
+		notif:      notif,
+	}
 }
 
 func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrencyID, toCurrencyID int64, fromAmount, proposedRate float64, comment *string) (*domain.OTCOrder, error) {
@@ -53,6 +97,10 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 	}()
 
 	return order, nil
+}
+
+func (s *OTCService) GetConfigs(ctx context.Context) ([]domain.OTCConfig, error) {
+	return s.otcRepo.GetConfigs(ctx)
 }
 
 func (s *OTCService) GetOrder(ctx context.Context, uid string) (*domain.OTCOrderDetail, error) {
@@ -253,7 +301,81 @@ func (s *OTCService) CompleteOrder(ctx context.Context, uid string, operatorID i
 	if order.OperatorID == nil || *order.OperatorID != operatorID {
 		return fmt.Errorf("only the assigned operator can complete the order")
 	}
+	if order.AgreedFromAmount == nil || order.ToAmount == nil {
+		return fmt.Errorf("order has no agreed amounts, cannot adjust wallets")
+	}
+
+	fromWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, order.UserID, int32(order.FromCurrencyID))
+	if err != nil {
+		return fmt.Errorf("client from-wallet not found: %w", err)
+	}
+	toWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, order.UserID, int32(order.ToCurrencyID))
+	if err != nil {
+		return fmt.Errorf("client to-wallet not found: %w", err)
+	}
+
+	// AtomicDeduct checks balance >= amount in the same UPDATE, preventing concurrent double-spend.
+	if err := s.walletRepo.AtomicDeduct(ctx, fromWallet.ID, *order.AgreedFromAmount); err != nil {
+		return fmt.Errorf("failed to deduct from-wallet: %w", err)
+	}
+
+	newToBalance := toWallet.Balance + *order.ToAmount
+	if err := s.walletRepo.UpdateBalance(ctx, toWallet.ID, newToBalance, toWallet.Locked); err != nil {
+		// Rollback: restore deducted amount
+		_ = s.walletRepo.UpdateBalance(ctx, fromWallet.ID, fromWallet.Balance, fromWallet.Locked)
+		return fmt.Errorf("failed to credit to-wallet: %w", err)
+	}
+
 	return s.otcRepo.Complete(ctx, order.ID)
+}
+
+// --- Config ---
+
+func (s *OTCService) CreateConfig(ctx context.Context, fromCurrencyID, toCurrencyID int64, minFromAmount float64, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
+	if fromCurrencyID == toCurrencyID {
+		return nil, fmt.Errorf("from_currency_id and to_currency_id must differ")
+	}
+	if minFromAmount < 0 {
+		return nil, fmt.Errorf("min_from_amount must be non-negative")
+	}
+	if paymentTimeoutMin <= 0 {
+		return nil, fmt.Errorf("payment_timeout_min must be positive")
+	}
+	config := &domain.OTCConfig{
+		FromCurrencyID:    fromCurrencyID,
+		ToCurrencyID:      toCurrencyID,
+		MinFromAmount:     minFromAmount,
+		PaymentTimeoutMin: paymentTimeoutMin,
+		IsActive:          isActive,
+	}
+	if err := s.otcRepo.CreateConfig(ctx, config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func (s *OTCService) UpdateConfig(ctx context.Context, id int64, minFromAmount float64, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
+	config, err := s.otcRepo.GetConfigByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if minFromAmount < 0 {
+		return nil, fmt.Errorf("min_from_amount must be non-negative")
+	}
+	if paymentTimeoutMin <= 0 {
+		return nil, fmt.Errorf("payment_timeout_min must be positive")
+	}
+	config.MinFromAmount = minFromAmount
+	config.PaymentTimeoutMin = paymentTimeoutMin
+	config.IsActive = isActive
+	if err := s.otcRepo.UpdateConfig(ctx, config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func (s *OTCService) DeleteConfig(ctx context.Context, id int64) error {
+	return s.otcRepo.DeleteConfig(ctx, id)
 }
 
 func (s *OTCService) isOrderParticipant(order *domain.OTCOrderDetail, userID int64) bool {

@@ -40,6 +40,10 @@ func (cl *CacheLoader) WarmUpCache(ctx context.Context) error {
 		return err
 	}
 
+	if err := cl.loadOTCConfigs(ctx); err != nil {
+		return err
+	}
+
 	cl.logger.Info("Cache warm-up completed", "duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
@@ -107,6 +111,17 @@ func (cl *CacheLoader) loadUsers(ctx context.Context) error {
 	}
 
 	cl.logger.Info("Loaded users into cache", "count", len(users))
+	return nil
+}
+
+func (cl *CacheLoader) loadOTCConfigs(ctx context.Context) error {
+	var configs []domain.OTCConfig
+	if err := cl.db.SelectContext(ctx, &configs, queries.OTCConfigListQuery); err != nil {
+		cl.logger.Error("Failed to load OTC configs", "error", err)
+		return err
+	}
+	cl.cacheService.SetOTCConfigs(configs)
+	cl.logger.Info("Loaded OTC configs into cache", "count", len(configs))
 	return nil
 }
 

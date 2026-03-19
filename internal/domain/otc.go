@@ -61,7 +61,20 @@ type OTCMessage struct {
 	OfferFromAmount *float64        `db:"offer_from_amount" json:"offer_from_amount"`
 	OfferToAmount   *float64        `db:"offer_to_amount" json:"offer_to_amount"`
 	OfferStatus     *OTCOfferStatus `db:"offer_status" json:"offer_status"`
+	IsRead          bool            `db:"is_read" json:"is_read"`
+	ReadAt          *time.Time      `db:"read_at" json:"read_at"`
 	CreatedAt       time.Time       `db:"created_at" json:"created_at"`
+}
+
+type OTCConfig struct {
+	ID                int64     `db:"id" json:"id"`
+	FromCurrencyID    int64     `db:"from_currency_id" json:"from_currency_id"`
+	ToCurrencyID      int64     `db:"to_currency_id" json:"to_currency_id"`
+	MinFromAmount     float64   `db:"min_from_amount" json:"min_from_amount"`
+	PaymentTimeoutMin int       `db:"payment_timeout_min" json:"payment_timeout_min"`
+	IsActive          bool      `db:"is_active" json:"is_active"`
+	CreatedAt         time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt         time.Time `db:"updated_at" json:"updated_at"`
 }
 
 type OTCOrderDetail struct {

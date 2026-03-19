@@ -44,7 +44,7 @@ func (ws *WebSocketService) handler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		ws.logger.Error("upgrader.Upgrade:", err)
+		ws.logger.Error("upgrader.Upgrade:", err.Error())
 		http.Error(w, "Could not upgrade to WebSocket", http.StatusInternalServerError)
 		cancel()
 		return

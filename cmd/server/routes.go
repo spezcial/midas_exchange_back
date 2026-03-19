@@ -155,9 +155,15 @@ func apiV1(
 		})
 
 		// OTC orders (admin + operator access)
-		otcAdminHandler := admin.NewOTCHandler(otcService)
+		otcAdminHandler := admin.NewOTCHandler(otcService, log)
 		r.Route("/otc", func(r chi.Router) {
 			r.Use(authMiddleware.RequireRole("admin", "super_admin", "operator"))
+			// Config (pair settings) — admin/super_admin only
+			r.With(authMiddleware.RequireRole("admin", "super_admin")).Get("/config", otcAdminHandler.GetConfig)
+			r.With(authMiddleware.RequireRole("admin", "super_admin")).Post("/config", otcAdminHandler.CreateConfig)
+			r.With(authMiddleware.RequireRole("admin", "super_admin")).Put("/config/{id}", otcAdminHandler.UpdateConfig)
+			r.With(authMiddleware.RequireRole("admin", "super_admin")).Delete("/config/{id}", otcAdminHandler.DeleteConfig)
+			// Orders
 			r.Get("/orders", otcAdminHandler.ListOrders)
 			r.Get("/orders/{uid}", otcAdminHandler.GetOrder)
 			r.Put("/orders/{uid}/take", otcAdminHandler.TakeOrder)

@@ -160,13 +160,15 @@ func (cs *CacheService) SetExchangeRate(rate *domain.ExchangeRate) {
 // UpdateExchangeRateCache updates all cache keys for a single exchange rate
 // This should be called after any Create/Update operation
 func (cs *CacheService) UpdateExchangeRateCache(rate *domain.ExchangeRate) {
+	rateCopy := *rate // store a copy so external mutations don't corrupt the cache
+
 	// Update cache by pair (from_currency_id, to_currency_id)
 	keyByPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
-	cs.cache.Set(keyByPair, rate, NoExpiration)
+	cs.cache.Set(keyByPair, &rateCopy, NoExpiration)
 
 	// Update cache by ID
 	keyByID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
-	cs.cache.Set(keyByID, rate, NoExpiration)
+	cs.cache.Set(keyByID, &rateCopy, NoExpiration)
 
 	// Invalidate aggregate caches (they need to be reloaded)
 	cs.cache.Delete("exchange_rates:all")
@@ -199,13 +201,15 @@ func (cs *CacheService) InvalidateExchangeRateListCaches() {
 // UpdateExchangeRateCacheOnly updates individual cache keys without invalidating lists
 // Useful for batch operations where you want to invalidate lists only once at the end
 func (cs *CacheService) UpdateExchangeRateCacheOnly(rate *domain.ExchangeRate) {
+	rateCopy := *rate // store a copy so external mutations don't corrupt the cache
+
 	// Update cache by pair (from_currency_id, to_currency_id)
 	keyByPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
-	cs.cache.Set(keyByPair, rate, NoExpiration)
+	cs.cache.Set(keyByPair, &rateCopy, NoExpiration)
 
 	// Update cache by ID
 	keyByID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
-	cs.cache.Set(keyByID, rate, NoExpiration)
+	cs.cache.Set(keyByID, &rateCopy, NoExpiration)
 }
 
 // Wallet cache operations
@@ -311,8 +315,74 @@ func (cs *CacheService) DeleteExchangeRate(from, to int32) {
 	cs.cache.Delete("exchange_rates:active")
 }
 
+// OTC Config cache operations
+
+func (cs *CacheService) GetOTCConfigs() ([]domain.OTCConfig, bool) {
+	val, found := cs.cache.Get("otc_config:all")
+	if !found {
+		return nil, false
+	}
+	configs, ok := val.([]domain.OTCConfig)
+	return configs, ok
+}
+
+func (cs *CacheService) GetOTCConfigByID(id int64) (*domain.OTCConfig, bool) {
+	key := fmt.Sprintf("otc_config:id:%d", id)
+	val, found := cs.cache.Get(key)
+	if !found {
+		return nil, false
+	}
+	cached, ok := val.(*domain.OTCConfig)
+	if !ok {
+		return nil, false
+	}
+	copy := *cached
+	return &copy, true
+}
+
+func (cs *CacheService) GetOTCConfigByPair(fromCurrencyID, toCurrencyID int64) (*domain.OTCConfig, bool) {
+	key := fmt.Sprintf("otc_config:pair:%d:%d", fromCurrencyID, toCurrencyID)
+	val, found := cs.cache.Get(key)
+	if !found {
+		return nil, false
+	}
+	cached, ok := val.(*domain.OTCConfig)
+	if !ok {
+		return nil, false
+	}
+	copy := *cached
+	return &copy, true
+}
+
+func (cs *CacheService) SetOTCConfigs(configs []domain.OTCConfig) {
+	cs.cache.Set("otc_config:all", configs, NoExpiration)
+	for i := range configs {
+		cs.setOTCConfigKeys(&configs[i])
+	}
+}
+
+func (cs *CacheService) SetOTCConfig(config *domain.OTCConfig) {
+	cs.setOTCConfigKeys(config)
+	cs.cache.Delete("otc_config:all") // list is now stale
+}
+
+func (cs *CacheService) InvalidateOTCConfig(id, fromCurrencyID, toCurrencyID int64) {
+	cs.cache.Delete(fmt.Sprintf("otc_config:id:%d", id))
+	cs.cache.Delete(fmt.Sprintf("otc_config:pair:%d:%d", fromCurrencyID, toCurrencyID))
+	cs.cache.Delete("otc_config:all")
+}
+
+func (cs *CacheService) setOTCConfigKeys(config *domain.OTCConfig) {
+	copy := *config
+	cs.cache.Set(fmt.Sprintf("otc_config:id:%d", config.ID), &copy, NoExpiration)
+	cs.cache.Set(fmt.Sprintf("otc_config:pair:%d:%d", config.FromCurrencyID, config.ToCurrencyID), &copy, NoExpiration)
+}
+
 // Utility functions
 func (cs *CacheService) InvalidateUser(userID int64) {
-	keyByID := fmt.Sprintf("user:%d", userID)
-	cs.cache.Delete(keyByID)
+	cs.cache.Delete(fmt.Sprintf("user:%d", userID))
+}
+
+func (cs *CacheService) InvalidateUserEmail(email string) {
+	cs.cache.Delete(fmt.Sprintf("user:email:%s", email))
 }

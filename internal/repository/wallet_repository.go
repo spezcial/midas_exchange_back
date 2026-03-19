@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/caspianex/exchange-backend/const/queries"
 	"github.com/caspianex/exchange-backend/internal/domain"
@@ -94,7 +95,6 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, ba
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
 		return err
 	}
-	fmt.Println("INFO: WALLET ID: ", wallet.ID, walletID)
 	// Update in DB
 	if err := r.db.QueryRowContext(ctx, queries.WalletUpdateBalanceQuery, balance, locked, walletID).Scan(&wallet.UpdatedAt); err != nil {
 		return err
@@ -106,6 +106,27 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, ba
 
 	r.cacheService.SetWallet(&wallet)
 
+	return nil
+}
+
+// AtomicDeduct decrements balance by amount only if current balance >= amount.
+// Returns ErrInsufficientBalance if the balance check fails (prevents concurrent double-spend).
+func (r *WalletRepository) AtomicDeduct(ctx context.Context, walletID int64, amount float64) error {
+	var updatedAt time.Time
+	var newBalance float64
+	err := r.db.QueryRowContext(ctx, queries.WalletDeductBalanceQuery, amount, walletID).Scan(&updatedAt, &newBalance)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("insufficient balance")
+	}
+	if err != nil {
+		return err
+	}
+
+	// Refresh cache entry with the new balance
+	var wallet domain.Wallet
+	if err := r.db.GetContext(context.Background(), &wallet, queries.WalletGetByIDQuery, walletID); err == nil {
+		r.cacheService.SetWallet(&wallet)
+	}
 	return nil
 }
 

@@ -8,15 +8,17 @@ import (
 
 	"github.com/caspianex/exchange-backend/const/queries"
 	"github.com/caspianex/exchange-backend/internal/domain"
+	"github.com/caspianex/exchange-backend/pkg/cache"
 	"github.com/caspianex/exchange-backend/pkg/database"
 )
 
 type OTCRepository struct {
-	db *database.Postgres
+	db    *database.Postgres
+	cache *cache.CacheService
 }
 
-func NewOTCRepository(db *database.Postgres) *OTCRepository {
-	return &OTCRepository{db: db}
+func NewOTCRepository(db *database.Postgres, cache *cache.CacheService) *OTCRepository {
+	return &OTCRepository{db: db, cache: cache}
 }
 
 // --- Orders ---
@@ -27,6 +29,88 @@ func (r *OTCRepository) Create(ctx context.Context, order *domain.OTCOrder) erro
 		order.UserID, order.FromCurrencyID, order.ToCurrencyID,
 		order.FromAmount, order.ProposedRate, order.Comment,
 	).Scan(&order.ID, &order.UID, &order.CreatedAt, &order.UpdatedAt)
+}
+
+// --- Config ---
+
+func (r *OTCRepository) GetConfigs(ctx context.Context) ([]domain.OTCConfig, error) {
+	if configs, ok := r.cache.GetOTCConfigs(); ok {
+		return configs, nil
+	}
+	var configs []domain.OTCConfig
+	if err := r.db.SelectContext(ctx, &configs, queries.OTCConfigListQuery); err != nil {
+		return nil, err
+	}
+	r.cache.SetOTCConfigs(configs)
+	return configs, nil
+}
+
+func (r *OTCRepository) GetConfigByID(ctx context.Context, id int64) (*domain.OTCConfig, error) {
+	if config, ok := r.cache.GetOTCConfigByID(id); ok {
+		return config, nil
+	}
+	var config domain.OTCConfig
+	err := r.db.GetContext(ctx, &config, queries.OTCConfigGetByIDQuery, id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("config not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.cache.SetOTCConfig(&config)
+	return &config, nil
+}
+
+func (r *OTCRepository) GetConfigByPair(ctx context.Context, fromCurrencyID, toCurrencyID int64) (*domain.OTCConfig, error) {
+	if config, ok := r.cache.GetOTCConfigByPair(fromCurrencyID, toCurrencyID); ok {
+		return config, nil
+	}
+	var config domain.OTCConfig
+	err := r.db.GetContext(ctx, &config, queries.OTCConfigGetByPairQuery, fromCurrencyID, toCurrencyID)
+	if err == sql.ErrNoRows {
+		return nil, nil // no config for this pair is valid — don't cache nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.cache.SetOTCConfig(&config)
+	return &config, nil
+}
+
+func (r *OTCRepository) CreateConfig(ctx context.Context, config *domain.OTCConfig) error {
+	if err := r.db.QueryRowContext(
+		ctx, queries.OTCConfigCreateQuery,
+		config.FromCurrencyID, config.ToCurrencyID,
+		config.MinFromAmount, config.PaymentTimeoutMin, config.IsActive,
+	).Scan(&config.ID, &config.CreatedAt, &config.UpdatedAt); err != nil {
+		return err
+	}
+	r.cache.SetOTCConfig(config) // also invalidates the list
+	return nil
+}
+
+func (r *OTCRepository) UpdateConfig(ctx context.Context, config *domain.OTCConfig) error {
+	if err := r.db.QueryRowContext(
+		ctx, queries.OTCConfigUpdateQuery,
+		config.MinFromAmount, config.PaymentTimeoutMin, config.IsActive, config.ID,
+	).Scan(&config.UpdatedAt); err != nil {
+		return err
+	}
+	r.cache.SetOTCConfig(config) // also invalidates the list
+	return nil
+}
+
+func (r *OTCRepository) DeleteConfig(ctx context.Context, id int64) error {
+	// Fetch first so we have the pair IDs needed to evict all keys
+	config, err := r.GetConfigByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := r.db.ExecContext(ctx, queries.OTCConfigDeleteQuery, id); err != nil {
+		return err
+	}
+	r.cache.InvalidateOTCConfig(id, config.FromCurrencyID, config.ToCurrencyID)
+	return nil
 }
 
 func (r *OTCRepository) GetByUID(ctx context.Context, uid string) (*domain.OTCOrderDetail, error) {
@@ -57,30 +141,30 @@ func (r *OTCRepository) GetByUID(ctx context.Context, uid string) (*domain.OTCOr
 }
 
 func (r *OTCRepository) ListByUser(ctx context.Context, userID int64, limit, offset int, status string) ([]domain.OTCOrder, int64, error) {
-	// Count
-	countQB := newQueryBuilder(queries.OTCOrderCountByUserBaseQuery)
-	if status != "" {
-		countQB.AddWhere(fmt.Sprintf("status = $%d", countQB.paramCounter), status)
-	}
-	countQuery, countArgs := countQB.Build("", "")
-	countArgs = append([]interface{}{userID}, countArgs...)
+	var (
+		total      int64
+		countQuery string
+		countArgs  []interface{}
+		listQuery  string
+		listArgs   []interface{}
+	)
 
-	var total int64
+	// Base queries already bind user_id as $1; additional params start at $2.
+	if status != "" {
+		countQuery = queries.OTCOrderCountByUserBaseQuery + ` AND status = $2`
+		countArgs = []interface{}{userID, status}
+		listQuery = queries.OTCOrderListByUserBaseQuery + ` AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
+		listArgs = []interface{}{userID, status, limit, offset}
+	} else {
+		countQuery = queries.OTCOrderCountByUserBaseQuery
+		countArgs = []interface{}{userID}
+		listQuery = queries.OTCOrderListByUserBaseQuery + ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		listArgs = []interface{}{userID, limit, offset}
+	}
+
 	if err := r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-
-	// List
-	listQB := newQueryBuilder(queries.OTCOrderListByUserBaseQuery)
-	if status != "" {
-		listQB.AddWhere(fmt.Sprintf("status = $%d", listQB.paramCounter), status)
-	}
-	listQuery, listArgs := listQB.Build(
-		"ORDER BY created_at DESC",
-		fmt.Sprintf("LIMIT $%d OFFSET $%d", listQB.paramCounter, listQB.paramCounter+1),
-	)
-	listArgs = append(listArgs, limit, offset)
-	listArgs = append([]interface{}{userID}, listArgs...)
 
 	var orders []domain.OTCOrder
 	if err := r.db.SelectContext(ctx, &orders, listQuery, listArgs...); err != nil {
@@ -153,7 +237,11 @@ func (r *OTCRepository) ListAll(ctx context.Context, limit, offset int, status, 
 
 func (r *OTCRepository) Take(ctx context.Context, orderID, operatorID int64) error {
 	var updatedAt time.Time
-	return r.db.QueryRowContext(ctx, queries.OTCOrderTakeQuery, operatorID, orderID).Scan(&updatedAt)
+	err := r.db.QueryRowContext(ctx, queries.OTCOrderTakeQuery, operatorID, orderID).Scan(&updatedAt)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("order is no longer available to take")
+	}
+	return err
 }
 
 func (r *OTCRepository) Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt float64, deadline time.Time) error {
@@ -207,6 +295,16 @@ func (r *OTCRepository) GetMessageByID(ctx context.Context, msgID int64) (*domai
 }
 
 func (r *OTCRepository) UpdateOfferStatus(ctx context.Context, msgID int64, status domain.OTCOfferStatus) error {
-	_, err := r.db.ExecContext(ctx, queries.OTCMessageUpdateOfferStatusQuery, string(status), msgID)
-	return err
+	result, err := r.db.ExecContext(ctx, queries.OTCMessageUpdateOfferStatusQuery, string(status), msgID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("offer is no longer pending")
+	}
+	return nil
 }

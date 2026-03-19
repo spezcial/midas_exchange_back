@@ -56,7 +56,7 @@ const (
 	OTCOrderTakeQuery = `
 		UPDATE otc_orders
 		SET operator_id = $1, status = 'negotiating', updated_at = NOW()
-		WHERE id = $2
+		WHERE id = $2 AND status = 'awaiting_review'
 		RETURNING updated_at
 `
 
@@ -104,7 +104,8 @@ const (
 
 	OTCMessageListByOrderQuery = `
 		SELECT id, order_id, sender_id, sender_role, message_type, content,
-		       offer_rate, offer_from_amount, offer_to_amount, offer_status, created_at
+		       offer_rate, offer_from_amount, offer_to_amount, offer_status,
+		       is_read, read_at, created_at
 		FROM otc_messages
 		WHERE order_id = $1
 		ORDER BY created_at ASC
@@ -112,14 +113,58 @@ const (
 
 	OTCMessageGetByIDQuery = `
 		SELECT id, order_id, sender_id, sender_role, message_type, content,
-		       offer_rate, offer_from_amount, offer_to_amount, offer_status, created_at
+		       offer_rate, offer_from_amount, offer_to_amount, offer_status,
+		       is_read, read_at, created_at
 		FROM otc_messages
 		WHERE id = $1
+`
+
+	OTCMessageMarkReadQuery = `
+		UPDATE otc_messages
+		SET is_read = true, read_at = NOW()
+		WHERE order_id = $1
+		  AND sender_id != $2
+		  AND is_read = false
 `
 
 	OTCMessageUpdateOfferStatusQuery = `
 		UPDATE otc_messages
 		SET offer_status = $1
-		WHERE id = $2
+		WHERE id = $2 AND offer_status = 'pending'
 `
+	OTCConfigListQuery = `
+		SELECT id, from_currency_id, to_currency_id, min_from_amount,
+		       payment_timeout_min, is_active, created_at, updated_at
+		FROM otc_config
+		ORDER BY from_currency_id, to_currency_id
+`
+
+	OTCConfigGetByIDQuery = `
+		SELECT id, from_currency_id, to_currency_id, min_from_amount,
+		       payment_timeout_min, is_active, created_at, updated_at
+		FROM otc_config
+		WHERE id = $1
+`
+
+	OTCConfigGetByPairQuery = `
+		SELECT id, from_currency_id, to_currency_id, min_from_amount,
+		       payment_timeout_min, is_active, created_at, updated_at
+		FROM otc_config
+		WHERE from_currency_id = $1 AND to_currency_id = $2
+`
+
+	OTCConfigCreateQuery = `
+		INSERT INTO otc_config (from_currency_id, to_currency_id, min_from_amount, payment_timeout_min, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, updated_at
+`
+
+	OTCConfigUpdateQuery = `
+		UPDATE otc_config
+		SET min_from_amount = $1, payment_timeout_min = $2, is_active = $3, updated_at = NOW()
+		WHERE id = $4
+		RETURNING updated_at
+`
+
+	OTCConfigDeleteQuery = `DELETE FROM otc_config WHERE id = $1`
 )

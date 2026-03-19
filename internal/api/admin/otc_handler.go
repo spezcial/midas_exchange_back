@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"github.com/caspianex/exchange-backend/pkg/logger"
 	"net/http"
 	"strconv"
 
@@ -12,10 +13,106 @@ import (
 
 type AdminOTCHandler struct {
 	otcService *service.OTCService
+	logger     *logger.Logger
 }
 
-func NewOTCHandler(otcService *service.OTCService) *AdminOTCHandler {
-	return &AdminOTCHandler{otcService: otcService}
+func NewOTCHandler(otcService *service.OTCService, logger *logger.Logger) *AdminOTCHandler {
+
+	return &AdminOTCHandler{otcService: otcService, logger: logger}
+}
+
+func (h *AdminOTCHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("OTC GetConfigs request")
+
+	configs, err := h.otcService.GetConfigs(r.Context())
+	if err != nil {
+		h.logger.Error("OTC GetConfigs error", "error", err)
+		respondError(w, http.StatusInternalServerError, "InternalServerError")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"configs": configs,
+	})
+}
+
+type createConfigRequest struct {
+	FromCurrencyID    int64   `json:"from_currency_id"`
+	ToCurrencyID      int64   `json:"to_currency_id"`
+	MinFromAmount     float64 `json:"min_from_amount"`
+	PaymentTimeoutMin int     `json:"payment_timeout_min"`
+	IsActive          bool    `json:"is_active"`
+}
+
+func (h *AdminOTCHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
+	var req createConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.FromCurrencyID == 0 || req.ToCurrencyID == 0 {
+		respondError(w, http.StatusBadRequest, "from_currency_id and to_currency_id are required")
+		return
+	}
+	if req.PaymentTimeoutMin == 0 {
+		req.PaymentTimeoutMin = 30 // default
+	}
+
+	config, err := h.otcService.CreateConfig(r.Context(), req.FromCurrencyID, req.ToCurrencyID, req.MinFromAmount, req.PaymentTimeoutMin, req.IsActive)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, config)
+}
+
+type updateConfigRequest struct {
+	MinFromAmount     float64 `json:"min_from_amount"`
+	PaymentTimeoutMin int     `json:"payment_timeout_min"`
+	IsActive          bool    `json:"is_active"`
+}
+
+func (h *AdminOTCHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid config ID")
+		return
+	}
+
+	var req updateConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.PaymentTimeoutMin == 0 {
+		req.PaymentTimeoutMin = 30
+	}
+
+	config, err := h.otcService.UpdateConfig(r.Context(), id, req.MinFromAmount, req.PaymentTimeoutMin, req.IsActive)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, config)
+}
+
+func (h *AdminOTCHandler) DeleteConfig(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid config ID")
+		return
+	}
+
+	if err := h.otcService.DeleteConfig(r.Context(), id); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "config deleted"})
 }
 
 func (h *AdminOTCHandler) ListOrders(w http.ResponseWriter, r *http.Request) {

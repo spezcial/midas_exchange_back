@@ -106,7 +106,11 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passw
 		return err
 	}
 
-	// Invalidate cache so next read fetches fresh data with new hash
+	// Invalidate both cache keys so next login fetches fresh data with new hash.
+	// Try to resolve email from cache before evicting the ID key.
+	if user, found := r.cacheService.GetUser(userID); found {
+		r.cacheService.InvalidateUserEmail(user.Email)
+	}
 	r.cacheService.InvalidateUser(userID)
 
 	return nil

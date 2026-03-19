@@ -33,6 +33,15 @@ const (
 		RETURNING updated_at
 `
 
+	// WalletDeductBalanceQuery atomically deducts amount only if current balance >= amount.
+	// Returns updated_at on success; no row if balance is insufficient (prevents double-spend).
+	WalletDeductBalanceQuery = `
+		UPDATE wallets
+		SET balance = balance - $1, updated_at = NOW()
+		WHERE id = $2 AND balance >= $1
+		RETURNING updated_at, balance
+`
+
 	CurrencyGetByCodeQuery = `SELECT * FROM currencies WHERE code = $1 AND is_active = true`
 
 	CurrencyGetAllQuery = `SELECT * FROM currencies WHERE is_active = true ORDER BY code`

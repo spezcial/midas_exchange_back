@@ -88,7 +88,7 @@ func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest)
 func (s *AuthService) Login(ctx context.Context, req *models.LoginRequest) (*models.AuthResponse, error) {
 	user, err := s.userRepo.GetByEmailAnyRole(ctx, req.Email)
 	if err != nil {
-		s.logger.Error("Get by email err:", err)
+		s.logger.Error("Get by email err", "error", err)
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
