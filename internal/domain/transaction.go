@@ -10,6 +10,8 @@ type TransactionStatus string
 const (
 	TransactionTypeDeposit    TransactionType = "deposit"
 	TransactionTypeWithdrawal TransactionType = "withdrawal"
+	TransactionTypeOTCDebit   TransactionType = "otc_debit"  // from-wallet deduction on OTC completion
+	TransactionTypeOTCCredit  TransactionType = "otc_credit" // to-wallet credit on OTC completion
 
 	TransactionStatusPending   TransactionStatus = "pending"
 	TransactionStatusCompleted TransactionStatus = "completed"

@@ -9,6 +9,12 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 )
 
+// OTCBroadcaster pushes new chat messages to connected WebSocket clients.
+// Implemented by OTCHub in cmd/server; handlers call it after each successful send.
+type OTCBroadcaster interface {
+	Broadcast(orderUID string, msg interface{})
+}
+
 // otcOrderRepo is the subset of OTCRepository used by OTCService.
 type otcOrderRepo interface {
 	Create(ctx context.Context, order *domain.OTCOrder) error
@@ -24,10 +30,12 @@ type otcOrderRepo interface {
 	CreateMessage(ctx context.Context, msg *domain.OTCMessage) error
 	GetMessageByID(ctx context.Context, msgID int64) (*domain.OTCMessage, error)
 	UpdateOfferStatus(ctx context.Context, msgID int64, status domain.OTCOfferStatus) error
+	MarkMessagesRead(ctx context.Context, orderID, readerID int64) error
 	Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt float64, deadline time.Time) error
 	Cancel(ctx context.Context, orderID int64, reason, cancelledBy string) error
 	SetPaymentReceived(ctx context.Context, orderID int64) error
-	Complete(ctx context.Context, orderID int64) error
+	CompleteOrderAtomic(ctx context.Context, orderID, fromWalletID, toWalletID, userID int64, fromAmount, agreedFromAmount, toAmount float64, orderUID string) error
+	Expire(ctx context.Context, orderID int64) (bool, error)
 }
 
 // otcUserRepo is the subset of UserRepository used by OTCService.
@@ -38,8 +46,9 @@ type otcUserRepo interface {
 // otcWalletRepo is the subset of WalletRepository used by OTCService.
 type otcWalletRepo interface {
 	GetByUserAndCurrency(ctx context.Context, userID int64, currencyID int32) (*domain.Wallet, error)
-	UpdateBalance(ctx context.Context, walletID int64, balance, locked float64) error
-	AtomicDeduct(ctx context.Context, walletID int64, amount float64) error
+	LockAmount(ctx context.Context, walletID int64, amount float64) error
+	UnlockAmount(ctx context.Context, walletID int64, amount float64) error
+	RefreshWalletCache(ctx context.Context, walletID int64) error
 }
 
 type OTCService struct {
@@ -72,6 +81,20 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 		return nil, fmt.Errorf("KYC level 2 or higher required to create an OTC order")
 	}
 
+	// Verify from-wallet exists and has sufficient balance before locking
+	fromWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, userID, int32(fromCurrencyID))
+	if err != nil {
+		return nil, fmt.Errorf("from-wallet not found: %w", err)
+	}
+	if fromWallet.Balance < fromAmount {
+		return nil, fmt.Errorf("insufficient balance to place OTC order")
+	}
+
+	// Lock funds first; if order creation fails we unlock
+	if err := s.walletRepo.LockAmount(ctx, fromWallet.ID, fromAmount); err != nil {
+		return nil, fmt.Errorf("failed to lock funds: %w", err)
+	}
+
 	order := &domain.OTCOrder{
 		UserID:         userID,
 		FromCurrencyID: fromCurrencyID,
@@ -82,6 +105,7 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 	}
 
 	if err := s.otcRepo.Create(ctx, order); err != nil {
+		_ = s.walletRepo.UnlockAmount(ctx, fromWallet.ID, fromAmount)
 		return nil, err
 	}
 
@@ -103,8 +127,45 @@ func (s *OTCService) GetConfigs(ctx context.Context) ([]domain.OTCConfig, error)
 	return s.otcRepo.GetConfigs(ctx)
 }
 
-func (s *OTCService) GetOrder(ctx context.Context, uid string) (*domain.OTCOrderDetail, error) {
-	return s.otcRepo.GetByUID(ctx, uid)
+// GetOrder loads the order by UID, applies lazy expiry, computes unread message
+// count for callerID, and marks those messages as read.
+func (s *OTCService) GetOrder(ctx context.Context, uid string, callerID int64) (*domain.OTCOrderDetail, error) {
+	order, err := s.otcRepo.GetByUID(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+
+	// Lazy expiry: if deadline passed and still in awaiting_payment, expire now.
+	// The Expire query is idempotent (AND status='awaiting_payment'), so only the
+	// first caller will get wasExpired=true and perform the wallet unlock.
+	if order.Status == domain.OTCStatusAwaitingPayment &&
+		order.PaymentDeadline != nil &&
+		order.PaymentDeadline.Before(time.Now()) {
+
+		wasExpired, _ := s.otcRepo.Expire(ctx, order.ID)
+		order.Status = domain.OTCStatusExpired
+
+		if wasExpired {
+			fromWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, order.UserID, int32(order.FromCurrencyID))
+			if err == nil {
+				_ = s.walletRepo.UnlockAmount(ctx, fromWallet.ID, order.FromAmount)
+			}
+		}
+	}
+
+	// Count unread messages (from the other party) before marking them read.
+	var unread int
+	for _, msg := range order.Messages {
+		if msg.SenderID != callerID && !msg.IsRead {
+			unread++
+		}
+	}
+	order.UnreadCount = unread
+
+	// Mark messages from the other party as read.
+	_ = s.otcRepo.MarkMessagesRead(ctx, order.ID, callerID)
+
+	return order, nil
 }
 
 func (s *OTCService) ListByUser(ctx context.Context, userID int64, limit, offset int, status string) ([]domain.OTCOrder, int64, error) {
@@ -273,7 +334,17 @@ func (s *OTCService) CancelOrder(ctx context.Context, uid string, callerID int64
 		}
 	}
 
-	return s.otcRepo.Cancel(ctx, order.ID, reason, callerRole)
+	if err := s.otcRepo.Cancel(ctx, order.ID, reason, callerRole); err != nil {
+		return err
+	}
+
+	// Best-effort unlock: release locked funds back to balance.
+	// If this fails, funds remain locked but the cancel is still committed.
+	fromWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, order.UserID, int32(order.FromCurrencyID))
+	if err == nil {
+		_ = s.walletRepo.UnlockAmount(ctx, fromWallet.ID, order.FromAmount)
+	}
+	return nil
 }
 
 func (s *OTCService) ConfirmPaymentReceived(ctx context.Context, uid string, operatorID int64) error {
@@ -314,19 +385,22 @@ func (s *OTCService) CompleteOrder(ctx context.Context, uid string, operatorID i
 		return fmt.Errorf("client to-wallet not found: %w", err)
 	}
 
-	// AtomicDeduct checks balance >= amount in the same UPDATE, preventing concurrent double-spend.
-	if err := s.walletRepo.AtomicDeduct(ctx, fromWallet.ID, *order.AgreedFromAmount); err != nil {
-		return fmt.Errorf("failed to deduct from-wallet: %w", err)
+	// Single atomic DB transaction: finalize from-wallet lock, credit to-wallet,
+	// insert both tx records, mark order completed. Rolls back automatically on any failure.
+	if err := s.otcRepo.CompleteOrderAtomic(
+		ctx,
+		order.ID, fromWallet.ID, toWallet.ID, order.UserID,
+		order.FromAmount, *order.AgreedFromAmount, *order.ToAmount,
+		order.UID,
+	); err != nil {
+		return err
 	}
 
-	newToBalance := toWallet.Balance + *order.ToAmount
-	if err := s.walletRepo.UpdateBalance(ctx, toWallet.ID, newToBalance, toWallet.Locked); err != nil {
-		// Rollback: restore deducted amount
-		_ = s.walletRepo.UpdateBalance(ctx, fromWallet.ID, fromWallet.Balance, fromWallet.Locked)
-		return fmt.Errorf("failed to credit to-wallet: %w", err)
-	}
+	// Refresh wallet cache so subsequent reads reflect the committed state.
+	_ = s.walletRepo.RefreshWalletCache(ctx, fromWallet.ID)
+	_ = s.walletRepo.RefreshWalletCache(ctx, toWallet.ID)
 
-	return s.otcRepo.Complete(ctx, order.ID)
+	return nil
 }
 
 // --- Config ---

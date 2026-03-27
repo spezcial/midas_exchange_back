@@ -31,7 +31,10 @@ func setupRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
+	otcHub := NewOTCHub(jwtManager, log)
+
 	r.Get("/ws", wsService.handler)
+	r.Get("/ws/otc/{uid}", otcHub.ServeOTCChat)
 
 	// Health check endpoints
 	healthHandler := health.NewHealthHandler(rateUpdater)
@@ -40,7 +43,7 @@ func setupRouter(
 	r.Get("/health/live", healthHandler.Live)
 	r.Get("/health/ready", healthHandler.Ready)
 
-	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService))
+	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService, otcHub))
 
 	return r
 }
@@ -56,6 +59,7 @@ func apiV1(
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
 	otcService *service.OTCService,
+	otcHub *OTCHub,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -105,7 +109,7 @@ func apiV1(
 		r.Get("/exchanges/{id}", exchangeHandler.GetExchange)
 		r.Delete("/exchanges/{id}", exchangeHandler.CancelExchange)
 
-		otcHandler := client.NewOTCHandler(otcService)
+		otcHandler := client.NewOTCHandler(otcService, otcHub)
 		r.Route("/otc", func(r chi.Router) {
 			r.Post("/orders", otcHandler.CreateOrder)
 			r.Get("/orders", otcHandler.ListOrders)
@@ -155,7 +159,7 @@ func apiV1(
 		})
 
 		// OTC orders (admin + operator access)
-		otcAdminHandler := admin.NewOTCHandler(otcService, log)
+		otcAdminHandler := admin.NewOTCHandler(otcService, log, otcHub)
 		r.Route("/otc", func(r chi.Router) {
 			r.Use(authMiddleware.RequireRole("admin", "super_admin", "operator"))
 			// Config (pair settings) — admin/super_admin only

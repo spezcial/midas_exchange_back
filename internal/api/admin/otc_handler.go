@@ -12,13 +12,13 @@ import (
 )
 
 type AdminOTCHandler struct {
-	otcService *service.OTCService
-	logger     *logger.Logger
+	otcService  *service.OTCService
+	logger      *logger.Logger
+	broadcaster service.OTCBroadcaster
 }
 
-func NewOTCHandler(otcService *service.OTCService, logger *logger.Logger) *AdminOTCHandler {
-
-	return &AdminOTCHandler{otcService: otcService, logger: logger}
+func NewOTCHandler(otcService *service.OTCService, logger *logger.Logger, broadcaster service.OTCBroadcaster) *AdminOTCHandler {
+	return &AdminOTCHandler{otcService: otcService, logger: logger, broadcaster: broadcaster}
 }
 
 func (h *AdminOTCHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -140,8 +140,10 @@ func (h *AdminOTCHandler) ListOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminOTCHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
+	callerID, _ := middleware.GetUserID(r.Context())
+
 	uid := chi.URLParam(r, "uid")
-	order, err := h.otcService.GetOrder(r.Context(), uid)
+	order, err := h.otcService.GetOrder(r.Context(), uid, callerID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
@@ -195,6 +197,9 @@ func (h *AdminOTCHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, msg)
+	}
 	respondJSON(w, http.StatusCreated, msg)
 }
 
@@ -229,6 +234,9 @@ func (h *AdminOTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, msg)
+	}
 	respondJSON(w, http.StatusCreated, msg)
 }
 

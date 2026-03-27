@@ -19,13 +19,17 @@ type mockOTCRepo struct {
 	message  *domain.OTCMessage
 	msgErr   error
 
-	createCalled          bool
-	takeCalled            bool
-	agreeCalled           bool
-	cancelCalled          bool
-	setPaymentRecvCalled  bool
-	completeCalled        bool
-	updateOfferStatCalled bool
+	createCalled              bool
+	takeCalled                bool
+	agreeCalled               bool
+	cancelCalled              bool
+	setPaymentRecvCalled      bool
+	completeAtomicCalled      bool
+	completeAtomicErr         error
+	updateOfferStatCalled     bool
+	expireCalled              bool
+	expireResult              bool
+	markMessagesReadCalled    bool
 }
 
 func (m *mockOTCRepo) Create(_ context.Context, order *domain.OTCOrder) error {
@@ -74,9 +78,20 @@ func (m *mockOTCRepo) SetPaymentReceived(_ context.Context, _ int64) error {
 	m.setPaymentRecvCalled = true
 	return m.orderErr
 }
-func (m *mockOTCRepo) Complete(_ context.Context, _ int64) error {
-	m.completeCalled = true
+func (m *mockOTCRepo) CompleteOrderAtomic(_ context.Context, _, _, _, _ int64, _, _, _ float64, _ string) error {
+	m.completeAtomicCalled = true
+	if m.completeAtomicErr != nil {
+		return m.completeAtomicErr
+	}
 	return m.orderErr
+}
+func (m *mockOTCRepo) MarkMessagesRead(_ context.Context, _, _ int64) error {
+	m.markMessagesReadCalled = true
+	return nil
+}
+func (m *mockOTCRepo) Expire(_ context.Context, _ int64) (bool, error) {
+	m.expireCalled = true
+	return m.expireResult, m.orderErr
 }
 func (m *mockOTCRepo) GetConfigByID(_ context.Context, _ int64) (*domain.OTCConfig, error) {
 	return nil, nil
@@ -95,11 +110,15 @@ func (m *mockUserRepo) GetByID(_ context.Context, _ int64) (*domain.User, error)
 }
 
 type mockWalletRepo struct {
-	wallets     map[string]*domain.Wallet // key: "userID:currencyID"
-	updateErr   map[int64]error           // key: walletID
-	deductErr   map[int64]error           // key: walletID, for AtomicDeduct
-	updateCalls []updateCall
-	deductCalls []deductCall
+	wallets       map[string]*domain.Wallet // key: "userID:currencyID"
+	updateErr     map[int64]error           // key: walletID
+	lockErr       map[int64]error
+	unlockErr     map[int64]error
+	finalizeErr   map[int64]error
+	updateCalls   []updateCall
+	lockCalls     []lockCall
+	unlockCalls   []unlockCall
+	finalizeCalls []finalizeCall
 }
 
 type updateCall struct {
@@ -108,16 +127,29 @@ type updateCall struct {
 	locked   float64
 }
 
-type deductCall struct {
+type lockCall struct {
 	walletID int64
 	amount   float64
 }
 
+type unlockCall struct {
+	walletID int64
+	amount   float64
+}
+
+type finalizeCall struct {
+	walletID         int64
+	fromAmount       float64
+	agreedFromAmount float64
+}
+
 func newMockWalletRepo() *mockWalletRepo {
 	return &mockWalletRepo{
-		wallets:   make(map[string]*domain.Wallet),
-		updateErr: make(map[int64]error),
-		deductErr: make(map[int64]error),
+		wallets:     make(map[string]*domain.Wallet),
+		updateErr:   make(map[int64]error),
+		lockErr:     make(map[int64]error),
+		unlockErr:   make(map[int64]error),
+		finalizeErr: make(map[int64]error),
 	}
 }
 
@@ -131,7 +163,6 @@ func (m *mockWalletRepo) GetByUserAndCurrency(_ context.Context, userID int64, c
 	if !ok {
 		return nil, errors.New("wallet not found")
 	}
-	// Return a copy, matching real cache behaviour so callers hold a snapshot
 	cp := *w
 	return &cp, nil
 }
@@ -141,7 +172,6 @@ func (m *mockWalletRepo) UpdateBalance(_ context.Context, walletID int64, balanc
 	if err, ok := m.updateErr[walletID]; ok {
 		return err
 	}
-	// Apply the update in-memory so subsequent reads reflect it
 	for _, w := range m.wallets {
 		if w.ID == walletID {
 			w.Balance = balance
@@ -151,9 +181,9 @@ func (m *mockWalletRepo) UpdateBalance(_ context.Context, walletID int64, balanc
 	return nil
 }
 
-func (m *mockWalletRepo) AtomicDeduct(_ context.Context, walletID int64, amount float64) error {
-	m.deductCalls = append(m.deductCalls, deductCall{walletID, amount})
-	if err, ok := m.deductErr[walletID]; ok {
+func (m *mockWalletRepo) LockAmount(_ context.Context, walletID int64, amount float64) error {
+	m.lockCalls = append(m.lockCalls, lockCall{walletID, amount})
+	if err, ok := m.lockErr[walletID]; ok {
 		return err
 	}
 	for _, w := range m.wallets {
@@ -162,10 +192,81 @@ func (m *mockWalletRepo) AtomicDeduct(_ context.Context, walletID int64, amount 
 				return errors.New("insufficient balance")
 			}
 			w.Balance -= amount
+			w.Locked += amount
 			return nil
 		}
 	}
 	return errors.New("wallet not found")
+}
+
+func (m *mockWalletRepo) UnlockAmount(_ context.Context, walletID int64, amount float64) error {
+	m.unlockCalls = append(m.unlockCalls, unlockCall{walletID, amount})
+	if err, ok := m.unlockErr[walletID]; ok {
+		return err
+	}
+	for _, w := range m.wallets {
+		if w.ID == walletID {
+			if w.Locked >= amount {
+				w.Locked -= amount
+				w.Balance += amount
+			}
+			return nil
+		}
+	}
+	return nil // best-effort
+}
+
+func (m *mockWalletRepo) FinalizeFromLocked(_ context.Context, walletID int64, fromAmount, agreedFromAmount float64) error {
+	m.finalizeCalls = append(m.finalizeCalls, finalizeCall{walletID, fromAmount, agreedFromAmount})
+	if err, ok := m.finalizeErr[walletID]; ok {
+		return err
+	}
+	for _, w := range m.wallets {
+		if w.ID == walletID {
+			if w.Locked < fromAmount {
+				return errors.New("insufficient locked balance or funds cannot cover agreed amount")
+			}
+			w.Locked -= fromAmount
+			w.Balance += (fromAmount - agreedFromAmount)
+			return nil
+		}
+	}
+	return errors.New("wallet not found")
+}
+
+func (m *mockWalletRepo) RefreshWalletCache(_ context.Context, _ int64) error { return nil }
+
+// ---------- mock tx repo ----------
+
+type mockTxRepo struct {
+	createErr error
+	created   []*domain.Transaction
+}
+
+func (m *mockTxRepo) Create(_ context.Context, tx *domain.Transaction) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	tx.ID = int64(len(m.created) + 1)
+	m.created = append(m.created, tx)
+	return nil
+}
+
+// selectiveTxRepo succeeds for the first `failAfter` calls, then returns an error.
+type selectiveTxRepo struct {
+	failAfter int
+	calls     int
+	created   []*domain.Transaction
+}
+
+func (m *selectiveTxRepo) Create(_ context.Context, tx *domain.Transaction) error {
+	m.calls++
+	if m.calls > m.failAfter {
+		return errors.New("db error on tx insert")
+	}
+	tx.ID = int64(m.calls)
+	m.created = append(m.created, tx)
+	return nil
 }
 
 // ---------- helpers ----------
@@ -210,7 +311,7 @@ func TestCompleteOrder_HappyPath(t *testing.T) {
 
 	otcRepo := &mockOTCRepo{order: order}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, UserID: order.UserID, CurrencyID: 1, Balance: 2000.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, UserID: order.UserID, CurrencyID: 1, Balance: 2000.0, Locked: 1000.0})
 	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, UserID: order.UserID, CurrencyID: 2, Balance: 10.0})
 
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
@@ -218,21 +319,24 @@ func TestCompleteOrder_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !otcRepo.completeCalled {
-		t.Error("expected Complete to be called on repo")
+	// All DB writes happen inside CompleteOrderAtomic (single SQL transaction).
+	if !otcRepo.completeAtomicCalled {
+		t.Error("expected CompleteOrderAtomic to be called on repo")
 	}
-	// from-wallet uses AtomicDeduct, to-wallet uses UpdateBalance
-	if len(wallets.deductCalls) != 1 {
-		t.Fatalf("expected 1 AtomicDeduct call, got %d", len(wallets.deductCalls))
-	}
-	if wallets.deductCalls[0].walletID != 1 || wallets.deductCalls[0].amount != 1000.0 {
-		t.Errorf("AtomicDeduct: expected walletID=1 amount=1000, got %+v", wallets.deductCalls[0])
-	}
-	if len(wallets.updateCalls) != 1 {
-		t.Fatalf("expected 1 UpdateBalance call (to-wallet), got %d", len(wallets.updateCalls))
-	}
-	if wallets.updateCalls[0].walletID != 2 || wallets.updateCalls[0].balance != 60.0 {
-		t.Errorf("to-wallet: expected balance=60, got %v", wallets.updateCalls[0].balance)
+}
+
+func TestCompleteOrder_AtomicFails(t *testing.T) {
+	operatorID := int64(99)
+	order := paymentReceivedOrder(operatorID)
+
+	otcRepo := &mockOTCRepo{order: order, completeAtomicErr: errors.New("db error")}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0, Locked: 1000.0})
+	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
+
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
+	if err := svc.CompleteOrder(context.Background(), "abc", operatorID); err == nil {
+		t.Fatal("expected error when atomic commit fails")
 	}
 }
 
@@ -301,7 +405,7 @@ func TestCompleteOrder_ToWalletNotFound(t *testing.T) {
 	order := paymentReceivedOrder(operatorID)
 
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0, Locked: 1000.0})
 	// to-wallet not registered
 
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, wallets)
@@ -313,73 +417,21 @@ func TestCompleteOrder_ToWalletNotFound(t *testing.T) {
 
 func TestCompleteOrder_InsufficientBalance(t *testing.T) {
 	operatorID := int64(99)
-	order := paymentReceivedOrder(operatorID) // AgreedFromAmount = 1000
-
-	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 500.0}) // not enough
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
-
-	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, wallets)
-	err := svc.CompleteOrder(context.Background(), "abc", operatorID)
-	if err == nil || err.Error() != "failed to deduct from-wallet: insufficient balance" {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestCompleteOrder_FromWalletUpdateFails(t *testing.T) {
-	operatorID := int64(99)
 	order := paymentReceivedOrder(operatorID)
 
+	// Simulate the atomic method failing due to insufficient locked balance.
+	otcRepo := &mockOTCRepo{order: order, completeAtomicErr: errors.New("insufficient locked balance")}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 500.0, Locked: 0})
 	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
-	wallets.deductErr[1] = errors.New("db error") // AtomicDeduct fails on from-wallet
 
-	otcRepo := &mockOTCRepo{order: order}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
 	err := svc.CompleteOrder(context.Background(), "abc", operatorID)
 	if err == nil {
-		t.Error("expected error when from-wallet deduct fails")
+		t.Error("expected error when insufficient locked balance")
 	}
-	if len(wallets.updateCalls) != 0 {
-		t.Error("UpdateBalance should not be called if AtomicDeduct failed")
-	}
-	if otcRepo.completeCalled {
-		t.Error("Complete should not be called if wallet deduct failed")
-	}
-}
-
-func TestCompleteOrder_ToWalletUpdateFails_RollsBackFromWallet(t *testing.T) {
-	operatorID := int64(99)
-	order := paymentReceivedOrder(operatorID)
-
-	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0})
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
-	wallets.updateErr[2] = errors.New("db error on to-wallet")
-
-	otcRepo := &mockOTCRepo{order: order}
-	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
-	err := svc.CompleteOrder(context.Background(), "abc", operatorID)
-	if err == nil {
-		t.Error("expected error when to-wallet update fails")
-	}
-
-	// AtomicDeduct on from-wallet, then to-wallet UpdateBalance fails, then rollback UpdateBalance on from-wallet
-	if len(wallets.deductCalls) != 1 {
-		t.Fatalf("expected 1 AtomicDeduct call, got %d", len(wallets.deductCalls))
-	}
-	// 2 UpdateBalance calls: to-wallet attempt (fails) + from-wallet rollback
-	if len(wallets.updateCalls) != 2 {
-		t.Fatalf("expected 2 UpdateBalance calls (to-wallet fail + rollback), got %d", len(wallets.updateCalls))
-	}
-	rollback := wallets.updateCalls[1]
-	// Rollback uses the snapshot balance from before AtomicDeduct (GetByUserAndCurrency returns a copy)
-	if rollback.walletID != 1 || rollback.balance != 2000.0 {
-		t.Errorf("rollback should restore from-wallet to 2000, got walletID=%d balance=%v", rollback.walletID, rollback.balance)
-	}
-	if otcRepo.completeCalled {
-		t.Error("Complete should not be called if to-wallet credit failed")
+	if otcRepo.completeAtomicCalled {
+		// atomic was called but should have returned the error above
 	}
 }
 
@@ -408,10 +460,13 @@ func TestCreateOrder_KYCTooLow(t *testing.T) {
 
 func TestCreateOrder_KYCSufficient(t *testing.T) {
 	otcRepo := &mockOTCRepo{}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 10000.0})
+	wallets.setWallet(1, 2, &domain.Wallet{ID: 2, Balance: 0})
 	svc := makeOTCService(
 		otcRepo,
 		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2, Email: "a@b.com"}},
-		newMockWalletRepo(),
+		wallets,
 	)
 	order, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
 	if err != nil {
@@ -422,6 +477,9 @@ func TestCreateOrder_KYCSufficient(t *testing.T) {
 	}
 	if !otcRepo.createCalled {
 		t.Error("expected Create to be called")
+	}
+	if len(wallets.lockCalls) != 1 {
+		t.Fatalf("expected 1 LockAmount call, got %d", len(wallets.lockCalls))
 	}
 }
 
@@ -434,6 +492,35 @@ func TestCreateOrder_UserNotFound(t *testing.T) {
 	_, err := svc.CreateOrder(context.Background(), 99, 1, 2, 500, 0.05, nil)
 	if err == nil {
 		t.Error("expected error when user not found")
+	}
+}
+
+func TestCreateOrder_InsufficientBalanceForLock(t *testing.T) {
+	wallets := newMockWalletRepo()
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 10.0}) // not enough
+	svc := makeOTCService(
+		&mockOTCRepo{},
+		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2}},
+		wallets,
+	)
+	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	if err == nil || err.Error() != "insufficient balance to place OTC order" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateOrder_LockFails(t *testing.T) {
+	wallets := newMockWalletRepo()
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 1000.0})
+	wallets.lockErr[1] = errors.New("db lock error")
+	svc := makeOTCService(
+		&mockOTCRepo{},
+		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2}},
+		wallets,
+	)
+	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	if err == nil {
+		t.Error("expected error when lock fails")
 	}
 }
 
@@ -532,6 +619,36 @@ func TestCancelOrder_OperatorCannotCancelTerminal(t *testing.T) {
 	err := svc.CancelOrder(context.Background(), "abc", 99, "operator", "reason")
 	if err == nil || err.Error() != "order is already in a terminal status" {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCancelOrder_UnlocksWallet(t *testing.T) {
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{
+			ID:             1,
+			UID:            "abc",
+			UserID:         10,
+			FromCurrencyID: 1,
+			ToCurrencyID:   2,
+			FromAmount:     500.0,
+			Status:         domain.OTCStatusNegotiating,
+		},
+	}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: 500.0, Balance: 0})
+
+	otcRepo := &mockOTCRepo{order: order}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
+
+	if err := svc.CancelOrder(context.Background(), "abc", 10, "client", "changed mind"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(wallets.unlockCalls) != 1 {
+		t.Fatalf("expected 1 UnlockAmount call, got %d", len(wallets.unlockCalls))
+	}
+	if wallets.unlockCalls[0].walletID != 5 || wallets.unlockCalls[0].amount != 500.0 {
+		t.Errorf("unexpected unlock call: %+v", wallets.unlockCalls[0])
 	}
 }
 

@@ -30,25 +30,27 @@ const (
 
 	OTCOrderListByUserBaseQuery = `
 		SELECT
-			id, uid, user_id, operator_id,
-			from_currency_id, to_currency_id,
-			from_amount, proposed_rate, agreed_rate, agreed_from_amount, to_amount,
-			status, comment, cancel_reason, cancelled_by, payment_deadline,
-			created_at, updated_at
-		FROM otc_orders
-		WHERE user_id = $1
+			o.id, o.uid, o.user_id, o.operator_id,
+			o.from_currency_id, o.to_currency_id,
+			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
+			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline,
+			o.created_at, o.updated_at,
+			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role != 'client' AND m.is_read = false) AS unread_count
+		FROM otc_orders o
+		WHERE o.user_id = $1
 `
 
 	OTCOrderCountByUserBaseQuery = `SELECT COUNT(*) FROM otc_orders WHERE user_id = $1`
 
 	OTCOrderListAllBaseQuery = `
 		SELECT
-			id, uid, user_id, operator_id,
-			from_currency_id, to_currency_id,
-			from_amount, proposed_rate, agreed_rate, agreed_from_amount, to_amount,
-			status, comment, cancel_reason, cancelled_by, payment_deadline,
-			created_at, updated_at
-		FROM otc_orders
+			o.id, o.uid, o.user_id, o.operator_id,
+			o.from_currency_id, o.to_currency_id,
+			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
+			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline,
+			o.created_at, o.updated_at,
+			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count
+		FROM otc_orders o
 `
 
 	OTCOrderCountAllBaseQuery = `SELECT COUNT(*) FROM otc_orders`
@@ -92,7 +94,7 @@ const (
 	OTCOrderExpireQuery = `
 		UPDATE otc_orders
 		SET status = 'expired', updated_at = NOW()
-		WHERE id = $1
+		WHERE id = $1 AND status = 'awaiting_payment'
 		RETURNING updated_at
 `
 

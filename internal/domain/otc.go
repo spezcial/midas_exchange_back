@@ -48,6 +48,7 @@ type OTCOrder struct {
 	PaymentDeadline  *time.Time `db:"payment_deadline" json:"payment_deadline"`
 	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
+	UnreadCount      int        `db:"unread_count" json:"unread_count"`
 }
 
 type OTCMessage struct {

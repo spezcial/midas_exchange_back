@@ -11,11 +11,12 @@ import (
 )
 
 type OTCHandler struct {
-	otcService *service.OTCService
+	otcService  *service.OTCService
+	broadcaster service.OTCBroadcaster
 }
 
-func NewOTCHandler(otcService *service.OTCService) *OTCHandler {
-	return &OTCHandler{otcService: otcService}
+func NewOTCHandler(otcService *service.OTCService, broadcaster service.OTCBroadcaster) *OTCHandler {
+	return &OTCHandler{otcService: otcService, broadcaster: broadcaster}
 }
 
 type createOTCOrderRequest struct {
@@ -90,7 +91,7 @@ func (h *OTCHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid := chi.URLParam(r, "uid")
-	order, err := h.otcService.GetOrder(r.Context(), uid)
+	order, err := h.otcService.GetOrder(r.Context(), uid, userID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
@@ -133,6 +134,9 @@ func (h *OTCHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, msg)
+	}
 	respondJSON(w, http.StatusCreated, msg)
 }
 
@@ -166,6 +170,9 @@ func (h *OTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, msg)
+	}
 	respondJSON(w, http.StatusCreated, msg)
 }
 

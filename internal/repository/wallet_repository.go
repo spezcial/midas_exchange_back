@@ -130,6 +130,86 @@ func (r *WalletRepository) AtomicDeduct(ctx context.Context, walletID int64, amo
 	return nil
 }
 
+// LockAmount moves amount from balance to locked atomically.
+// Returns "insufficient balance" if balance < amount.
+func (r *WalletRepository) LockAmount(ctx context.Context, walletID int64, amount float64) error {
+	var wallet domain.Wallet
+	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
+		return err
+	}
+	var updatedAt time.Time
+	err := r.db.QueryRowContext(ctx, queries.WalletLockAmountQuery, amount, walletID).Scan(&updatedAt)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("insufficient balance")
+	}
+	if err != nil {
+		return err
+	}
+	wallet.Balance -= amount
+	wallet.Locked += amount
+	wallet.UpdatedAt = updatedAt
+	r.cacheService.SetWallet(&wallet)
+	return nil
+}
+
+// UnlockAmount moves amount from locked back to balance atomically.
+// Silently succeeds even if locked < amount (no-op via ErrNoRows) — callers treat it as best-effort.
+func (r *WalletRepository) UnlockAmount(ctx context.Context, walletID int64, amount float64) error {
+	var wallet domain.Wallet
+	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
+		return err
+	}
+	var updatedAt time.Time
+	err := r.db.QueryRowContext(ctx, queries.WalletUnlockAmountQuery, amount, walletID).Scan(&updatedAt)
+	if err == sql.ErrNoRows {
+		return nil // locked < amount, treat as already unlocked
+	}
+	if err != nil {
+		return err
+	}
+	wallet.Locked -= amount
+	wallet.Balance += amount
+	wallet.UpdatedAt = updatedAt
+	r.cacheService.SetWallet(&wallet)
+	return nil
+}
+
+// FinalizeFromLocked is used at OTC order completion.
+// fromAmount: the original amount that was locked at order creation.
+// agreedFromAmount: the actual amount to consume (may differ from fromAmount).
+// Effect: locked -= fromAmount, balance += (fromAmount - agreedFromAmount).
+func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int64, fromAmount, agreedFromAmount float64) error {
+	var wallet domain.Wallet
+	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
+		return err
+	}
+	var updatedAt time.Time
+	err := r.db.QueryRowContext(ctx, queries.WalletFinalizeLockedQuery, fromAmount, agreedFromAmount, walletID).Scan(&updatedAt)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("insufficient locked balance or funds cannot cover agreed amount")
+	}
+	if err != nil {
+		return err
+	}
+	wallet.Locked -= fromAmount
+	wallet.Balance += (fromAmount - agreedFromAmount)
+	wallet.UpdatedAt = updatedAt
+	r.cacheService.SetWallet(&wallet)
+	return nil
+}
+
+// RefreshWalletCache reads the wallet from DB and updates the in-memory cache.
+// Call this after operations that write to the wallet outside the normal repo methods
+// (e.g., after CompleteOrderAtomic).
+func (r *WalletRepository) RefreshWalletCache(ctx context.Context, walletID int64) error {
+	var wallet domain.Wallet
+	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetByIDQuery, walletID); err != nil {
+		return err
+	}
+	r.cacheService.SetWallet(&wallet)
+	return nil
+}
+
 func (r *WalletRepository) GetCurrencyByCode(ctx context.Context, code string) (*domain.Currency, error) {
 	// Check cache first - currencies are heavily cached
 	if currency, found := r.cacheService.GetCurrency(code); found {

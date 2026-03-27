@@ -42,6 +42,47 @@ const (
 		RETURNING updated_at, balance
 `
 
+	// WalletLockAmountQuery atomically moves `amount` from balance to locked.
+	// Fails (no row returned) if balance < amount.
+	WalletLockAmountQuery = `
+    UPDATE wallets
+    SET balance = balance - $1, locked = locked + $1, updated_at = NOW()
+    WHERE id = $2 AND balance >= $1
+    RETURNING updated_at
+`
+
+	// WalletUnlockAmountQuery atomically moves `amount` from locked back to balance.
+	// Fails (no row returned) if locked < amount.
+	WalletUnlockAmountQuery = `
+    UPDATE wallets
+    SET locked = locked - $1, balance = balance + $1, updated_at = NOW()
+    WHERE id = $2 AND locked >= $1
+    RETURNING updated_at
+`
+
+	// WalletFinalizeLockedQuery is used at OTC completion.
+	// $1 = from_amount (the original locked amount to fully release from locked)
+	// $2 = agreed_from_amount (the actual amount consumed; may differ from from_amount)
+	// Effect: locked -= from_amount, balance += (from_amount - agreed_from_amount)
+	// Net: client pays agreed_from_amount; any excess lock is returned to balance.
+	// Fails if locked < from_amount OR if resulting balance would go negative.
+	WalletFinalizeLockedQuery = `
+    UPDATE wallets
+    SET locked = locked - $1, balance = balance + ($1 - $2), updated_at = NOW()
+    WHERE id = $3
+      AND locked >= $1
+      AND balance + ($1 - $2) >= 0
+    RETURNING updated_at
+`
+
+	// WalletAddBalanceQuery atomically increments balance by amount.
+	WalletAddBalanceQuery = `
+    UPDATE wallets
+    SET balance = balance + $1, updated_at = NOW()
+    WHERE id = $2
+    RETURNING updated_at
+`
+
 	CurrencyGetByCodeQuery = `SELECT * FROM currencies WHERE code = $1 AND is_active = true`
 
 	CurrencyGetAllQuery = `SELECT * FROM currencies WHERE is_active = true ORDER BY code`

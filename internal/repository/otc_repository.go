@@ -123,14 +123,6 @@ func (r *OTCRepository) GetByUID(ctx context.Context, uid string) (*domain.OTCOr
 		return nil, err
 	}
 
-	// Lazy expiry
-	if order.Status == domain.OTCStatusAwaitingPayment &&
-		order.PaymentDeadline != nil &&
-		order.PaymentDeadline.Before(time.Now()) {
-		_ = r.Expire(ctx, order.ID)
-		order.Status = domain.OTCStatusExpired
-	}
-
 	msgs, err := r.ListMessages(ctx, order.ID)
 	if err != nil {
 		return nil, err
@@ -188,7 +180,8 @@ func (r *OTCRepository) ListAll(ctx context.Context, limit, offset int, status, 
 		countQuery = `SELECT COUNT(*) FROM otc_orders o JOIN users u ON o.user_id = u.id WHERE u.email ILIKE $1`
 		listQuery = `SELECT o.id, o.uid, o.user_id, o.operator_id, o.from_currency_id, o.to_currency_id,
 			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
-			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline, o.created_at, o.updated_at
+			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline, o.created_at, o.updated_at,
+			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count
 			FROM otc_orders o JOIN users u ON o.user_id = u.id WHERE u.email ILIKE $1`
 		countArgs = []interface{}{emailPattern}
 		listArgs = []interface{}{emailPattern}
@@ -264,9 +257,16 @@ func (r *OTCRepository) Complete(ctx context.Context, orderID int64) error {
 	return r.db.QueryRowContext(ctx, queries.OTCOrderCompleteQuery, orderID).Scan(&updatedAt)
 }
 
-func (r *OTCRepository) Expire(ctx context.Context, orderID int64) error {
+func (r *OTCRepository) Expire(ctx context.Context, orderID int64) (bool, error) {
 	var updatedAt time.Time
-	return r.db.QueryRowContext(ctx, queries.OTCOrderExpireQuery, orderID).Scan(&updatedAt)
+	err := r.db.QueryRowContext(ctx, queries.OTCOrderExpireQuery, orderID).Scan(&updatedAt)
+	if err == sql.ErrNoRows {
+		return false, nil // already expired or status was not awaiting_payment
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // --- Messages ---
@@ -292,6 +292,74 @@ func (r *OTCRepository) GetMessageByID(ctx context.Context, msgID int64) (*domai
 		return nil, fmt.Errorf("message not found")
 	}
 	return &msg, err
+}
+
+func (r *OTCRepository) MarkMessagesRead(ctx context.Context, orderID, readerID int64) error {
+	_, err := r.db.ExecContext(ctx, queries.OTCMessageMarkReadQuery, orderID, readerID)
+	return err
+}
+
+// CompleteOrderAtomic wraps all five writes that finalise an OTC order into a
+// single SQL transaction: finalize from-wallet, credit to-wallet, insert debit
+// tx record, insert credit tx record, mark order completed.
+// Either all writes commit or none do.
+func (r *OTCRepository) CompleteOrderAtomic(
+	ctx context.Context,
+	orderID, fromWalletID, toWalletID, userID int64,
+	fromAmount, agreedFromAmount, toAmount float64,
+	orderUID string,
+) error {
+	tx, err := r.db.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var ts time.Time
+
+	// 1. Release from-wallet lock: locked -= fromAmount, balance += excess
+	err = tx.QueryRowContext(ctx, queries.WalletFinalizeLockedQuery,
+		fromAmount, agreedFromAmount, fromWalletID,
+	).Scan(&ts)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("insufficient locked balance")
+	}
+	if err != nil {
+		return fmt.Errorf("finalize from-wallet: %w", err)
+	}
+
+	// 2. Credit to-wallet
+	err = tx.QueryRowContext(ctx, queries.WalletAddBalanceQuery, toAmount, toWalletID).Scan(&ts)
+	if err != nil {
+		return fmt.Errorf("credit to-wallet: %w", err)
+	}
+
+	// 3 & 4. Transaction records (debit + credit)
+	var recID int64
+	var createdAt, updatedAt time.Time
+	for _, row := range []struct {
+		walletID int64
+		txType   string
+		amount   float64
+	}{
+		{fromWalletID, string(domain.TransactionTypeOTCDebit), agreedFromAmount},
+		{toWalletID, string(domain.TransactionTypeOTCCredit), toAmount},
+	} {
+		err = tx.QueryRowContext(ctx, queries.TransactionCreateQuery,
+			userID, row.walletID, row.txType, row.amount, 0.0,
+			string(domain.TransactionStatusCompleted), orderUID,
+		).Scan(&recID, &createdAt, &updatedAt)
+		if err != nil {
+			return fmt.Errorf("record %s tx: %w", row.txType, err)
+		}
+	}
+
+	// 5. Mark order completed
+	if err = tx.QueryRowContext(ctx, queries.OTCOrderCompleteQuery, orderID).Scan(&ts); err != nil {
+		return fmt.Errorf("complete order: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 func (r *OTCRepository) UpdateOfferStatus(ctx context.Context, msgID int64, status domain.OTCOfferStatus) error {
