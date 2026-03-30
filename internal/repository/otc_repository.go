@@ -33,6 +33,22 @@ func (r *OTCRepository) Create(ctx context.Context, order *domain.OTCOrder) erro
 
 // --- Config ---
 
+func (r *OTCRepository) GetAllConfigsWithCurrencies(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	var configs []domain.OTCConfigWithCurrencies
+	if err := r.db.SelectContext(ctx, &configs, queries.OTCAllConfigsWithCurrenciesQuery); err != nil {
+		return nil, err
+	}
+	return configs, nil
+}
+
+func (r *OTCRepository) GetActiveConfigsWithCurrencies(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	var configs []domain.OTCConfigWithCurrencies
+	if err := r.db.SelectContext(ctx, &configs, queries.OTCActiveConfigsWithCurrenciesQuery); err != nil {
+		return nil, err
+	}
+	return configs, nil
+}
+
 func (r *OTCRepository) GetConfigs(ctx context.Context) ([]domain.OTCConfig, error) {
 	if configs, ok := r.cache.GetOTCConfigs(); ok {
 		return configs, nil

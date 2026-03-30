@@ -22,15 +22,11 @@ func NewOTCHandler(otcService *service.OTCService, logger *logger.Logger, broadc
 }
 
 func (h *AdminOTCHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("OTC GetConfigs request")
-
-	configs, err := h.otcService.GetConfigs(r.Context())
+	configs, err := h.otcService.GetAllConfigsWithCurrencies(r.Context())
 	if err != nil {
-		h.logger.Error("OTC GetConfigs error", "error", err)
-		respondError(w, http.StatusInternalServerError, "InternalServerError")
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"configs": configs,
 	})

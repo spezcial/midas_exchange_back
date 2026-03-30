@@ -67,6 +67,12 @@ type OTCMessage struct {
 	CreatedAt       time.Time       `db:"created_at" json:"created_at"`
 }
 
+type OTCConfigWithCurrencies struct {
+	OTCConfig
+	FromCurrency Currency `db:"from_currency" json:"from_currency"`
+	ToCurrency   Currency `db:"to_currency" json:"to_currency"`
+}
+
 type OTCConfig struct {
 	ID                int64     `db:"id" json:"id"`
 	FromCurrencyID    int64     `db:"from_currency_id" json:"from_currency_id"`

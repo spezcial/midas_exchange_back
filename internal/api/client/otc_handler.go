@@ -27,6 +27,15 @@ type createOTCOrderRequest struct {
 	Comment        *string `json:"comment"`
 }
 
+func (h *OTCHandler) GetActiveConfigs(w http.ResponseWriter, r *http.Request) {
+	configs, err := h.otcService.GetActiveConfigs(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, configs)
+}
+
 func (h *OTCHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {

@@ -96,6 +96,16 @@ func (m *mockOTCRepo) Expire(_ context.Context, _ int64) (bool, error) {
 func (m *mockOTCRepo) GetConfigByID(_ context.Context, _ int64) (*domain.OTCConfig, error) {
 	return nil, nil
 }
+func (m *mockOTCRepo) GetConfigByPair(_ context.Context, _, _ int64) (*domain.OTCConfig, error) {
+	// Return a permissive config by default so existing tests are unaffected
+	return &domain.OTCConfig{IsActive: true, MinFromAmount: 0}, nil
+}
+func (m *mockOTCRepo) GetActiveConfigsWithCurrencies(_ context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	return nil, nil
+}
+func (m *mockOTCRepo) GetAllConfigsWithCurrencies(_ context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	return nil, nil
+}
 func (m *mockOTCRepo) CreateConfig(_ context.Context, _ *domain.OTCConfig) error  { return nil }
 func (m *mockOTCRepo) UpdateConfig(_ context.Context, _ *domain.OTCConfig) error  { return nil }
 func (m *mockOTCRepo) DeleteConfig(_ context.Context, _ int64) error              { return nil }

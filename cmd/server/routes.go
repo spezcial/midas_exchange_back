@@ -111,6 +111,7 @@ func apiV1(
 
 		otcHandler := client.NewOTCHandler(otcService, otcHub)
 		r.Route("/otc", func(r chi.Router) {
+			r.Get("/config", otcHandler.GetActiveConfigs)
 			r.Post("/orders", otcHandler.CreateOrder)
 			r.Get("/orders", otcHandler.ListOrders)
 			r.Get("/orders/{uid}", otcHandler.GetOrder)

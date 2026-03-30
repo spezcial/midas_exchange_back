@@ -21,6 +21,9 @@ type otcOrderRepo interface {
 	GetByUID(ctx context.Context, uid string) (*domain.OTCOrderDetail, error)
 	GetConfigs(ctx context.Context) ([]domain.OTCConfig, error)
 	GetConfigByID(ctx context.Context, id int64) (*domain.OTCConfig, error)
+	GetConfigByPair(ctx context.Context, fromCurrencyID, toCurrencyID int64) (*domain.OTCConfig, error)
+	GetActiveConfigsWithCurrencies(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error)
+	GetAllConfigsWithCurrencies(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error)
 	CreateConfig(ctx context.Context, config *domain.OTCConfig) error
 	UpdateConfig(ctx context.Context, config *domain.OTCConfig) error
 	DeleteConfig(ctx context.Context, id int64) error
@@ -72,6 +75,14 @@ func NewOTCService(
 	}
 }
 
+func (s *OTCService) GetActiveConfigs(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	return s.otcRepo.GetActiveConfigsWithCurrencies(ctx)
+}
+
+func (s *OTCService) GetAllConfigsWithCurrencies(ctx context.Context) ([]domain.OTCConfigWithCurrencies, error) {
+	return s.otcRepo.GetAllConfigsWithCurrencies(ctx)
+}
+
 func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrencyID, toCurrencyID int64, fromAmount, proposedRate float64, comment *string) (*domain.OTCOrder, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -79,6 +90,18 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 	}
 	if user.KycLevel < 2 {
 		return nil, fmt.Errorf("KYC level 2 or higher required to create an OTC order")
+	}
+
+	// Validate currency pair against otc_config
+	cfg, err := s.otcRepo.GetConfigByPair(ctx, fromCurrencyID, toCurrencyID)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil || !cfg.IsActive {
+		return nil, fmt.Errorf("this currency pair is not available for OTC trading")
+	}
+	if fromAmount < cfg.MinFromAmount {
+		return nil, fmt.Errorf("minimum order amount for this pair is %.2f", cfg.MinFromAmount)
 	}
 
 	// Verify from-wallet exists and has sufficient balance before locking

@@ -134,6 +134,45 @@ const (
 		SET offer_status = $1
 		WHERE id = $2 AND offer_status = 'pending'
 `
+	OTCAllConfigsWithCurrenciesQuery = `
+		SELECT
+			c.id, c.from_currency_id, c.to_currency_id,
+			c.min_from_amount, c.payment_timeout_min, c.is_active,
+			c.created_at, c.updated_at,
+			fc.id as "from_currency.id", fc.code as "from_currency.code",
+			fc.name as "from_currency.name", fc.symbol as "from_currency.symbol",
+			fc.is_active as "from_currency.is_active", fc.is_crypto as "from_currency.is_crypto",
+			fc.created_at as "from_currency.created_at", fc.updated_at as "from_currency.updated_at",
+			tc.id as "to_currency.id", tc.code as "to_currency.code",
+			tc.name as "to_currency.name", tc.symbol as "to_currency.symbol",
+			tc.is_active as "to_currency.is_active", tc.is_crypto as "to_currency.is_crypto",
+			tc.created_at as "to_currency.created_at", tc.updated_at as "to_currency.updated_at"
+		FROM otc_config c
+		JOIN currencies fc ON c.from_currency_id = fc.id
+		JOIN currencies tc ON c.to_currency_id = tc.id
+		ORDER BY fc.code, tc.code
+`
+
+	OTCActiveConfigsWithCurrenciesQuery = `
+		SELECT
+			c.id, c.from_currency_id, c.to_currency_id,
+			c.min_from_amount, c.payment_timeout_min, c.is_active,
+			c.created_at, c.updated_at,
+			fc.id as "from_currency.id", fc.code as "from_currency.code",
+			fc.name as "from_currency.name", fc.symbol as "from_currency.symbol",
+			fc.is_active as "from_currency.is_active", fc.is_crypto as "from_currency.is_crypto",
+			fc.created_at as "from_currency.created_at", fc.updated_at as "from_currency.updated_at",
+			tc.id as "to_currency.id", tc.code as "to_currency.code",
+			tc.name as "to_currency.name", tc.symbol as "to_currency.symbol",
+			tc.is_active as "to_currency.is_active", tc.is_crypto as "to_currency.is_crypto",
+			tc.created_at as "to_currency.created_at", tc.updated_at as "to_currency.updated_at"
+		FROM otc_config c
+		JOIN currencies fc ON c.from_currency_id = fc.id
+		JOIN currencies tc ON c.to_currency_id = tc.id
+		WHERE c.is_active = true
+		ORDER BY fc.code, tc.code
+`
+
 	OTCConfigListQuery = `
 		SELECT id, from_currency_id, to_currency_id, min_from_amount,
 		       payment_timeout_min, is_active, created_at, updated_at
