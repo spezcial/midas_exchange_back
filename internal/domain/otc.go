@@ -2,6 +2,17 @@ package domain
 
 import "time"
 
+// Audit log action constants
+const (
+	OTCAuditActionTookOrder        = "took_order"
+	OTCAuditActionSentOffer        = "sent_offer"
+	OTCAuditActionAcceptedOffer    = "accepted_offer"
+	OTCAuditActionRejectedOffer    = "rejected_offer"
+	OTCAuditActionConfirmedPayment = "confirmed_payment"
+	OTCAuditActionCompleted        = "completed"
+	OTCAuditActionCancelled        = "cancelled"
+)
+
 type OTCStatus string
 
 const (
@@ -89,4 +100,71 @@ type OTCOrderDetail struct {
 	FromCurrency Currency     `db:"from_currency" json:"from_currency"`
 	ToCurrency   Currency     `db:"to_currency" json:"to_currency"`
 	Messages     []OTCMessage `json:"messages,omitempty"`
+}
+
+// OTCListFilter holds optional filters for the admin order list / export.
+type OTCListFilter struct {
+	Status         string
+	Email          string
+	FromDate       *time.Time
+	ToDate         *time.Time
+	FromCurrencyID *int64
+	ToCurrencyID   *int64
+	OperatorID     *int64
+}
+
+// OTCAuditLog records a single operator action on an OTC order.
+type OTCAuditLog struct {
+	ID        int64     `db:"id"         json:"id"`
+	OrderID   int64     `db:"order_id"   json:"order_id"`
+	ActorID   int64     `db:"actor_id"   json:"actor_id"`
+	ActorRole string    `db:"actor_role" json:"actor_role"`
+	Action    string    `db:"action"     json:"action"`
+	Details   *string   `db:"details"    json:"details,omitempty"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+}
+
+// OTCOrderExportRow is a flat row used for CSV export (joins currencies + users).
+type OTCOrderExportRow struct {
+	UID              string    `db:"uid"`
+	Status           string    `db:"status"`
+	ClientEmail      string    `db:"client_email"`
+	OperatorEmail    *string   `db:"operator_email"`
+	FromCurrencyCode string    `db:"from_currency_code"`
+	ToCurrencyCode   string    `db:"to_currency_code"`
+	FromAmount       float64   `db:"from_amount"`
+	ProposedRate     float64   `db:"proposed_rate"`
+	AgreedRate       *float64  `db:"agreed_rate"`
+	AgreedFromAmount *float64  `db:"agreed_from_amount"`
+	ToAmount         *float64  `db:"to_amount"`
+	CancelReason     *string   `db:"cancel_reason"`
+	CreatedAt        time.Time `db:"created_at"`
+	UpdatedAt        time.Time `db:"updated_at"`
+}
+
+// OTCAnalyticsSummary is the high-level aggregate block in the analytics response.
+type OTCAnalyticsSummary struct {
+	TotalOrders    int64   `json:"total_orders"    db:"total_orders"`
+	Completed      int64   `json:"completed"       db:"completed"`
+	Cancelled      int64   `json:"cancelled"       db:"cancelled"`
+	Expired        int64   `json:"expired"         db:"expired"`
+	ConversionRate float64 `json:"conversion_rate"` // computed after DB scan
+	TotalVolume    float64 `json:"total_volume"    db:"total_volume"`
+	AvgSpreadPct   float64 `json:"avg_spread_pct"  db:"avg_spread_pct"`
+}
+
+// OTCAnalyticsPeriod is one bucket in the time-series breakdown.
+type OTCAnalyticsPeriod struct {
+	Period    string  `json:"period"    db:"period"`
+	Total     int64   `json:"total"     db:"total"`
+	Completed int64   `json:"completed" db:"completed"`
+	Cancelled int64   `json:"cancelled" db:"cancelled"`
+	Expired   int64   `json:"expired"   db:"expired"`
+	Volume    float64 `json:"volume"    db:"volume"`
+}
+
+// OTCAnalytics is the full analytics response payload.
+type OTCAnalytics struct {
+	Summary  OTCAnalyticsSummary  `json:"summary"`
+	ByPeriod []OTCAnalyticsPeriod `json:"by_period"`
 }

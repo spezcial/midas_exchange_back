@@ -208,4 +208,75 @@ const (
 `
 
 	OTCConfigDeleteQuery = `DELETE FROM otc_config WHERE id = $1`
+
+	// --- Audit log ---
+
+	OTCAuditLogCreateQuery = `
+		INSERT INTO otc_audit_log (order_id, actor_id, actor_role, action, details)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at
+`
+
+	OTCAuditLogListByOrderQuery = `
+		SELECT id, order_id, actor_id, actor_role, action, details, created_at
+		FROM otc_audit_log
+		WHERE order_id = $1
+		ORDER BY created_at ASC
+`
+
+	// --- Analytics ---
+
+	OTCAnalyticsSummaryQuery = `
+		SELECT
+			COUNT(*)                                                              AS total_orders,
+			COUNT(*) FILTER (WHERE status = 'completed')                         AS completed,
+			COUNT(*) FILTER (WHERE status = 'cancelled')                         AS cancelled,
+			COUNT(*) FILTER (WHERE status = 'expired')                           AS expired,
+			COALESCE(SUM(CASE WHEN status = 'completed' THEN agreed_from_amount ELSE 0 END), 0) AS total_volume,
+			COALESCE(AVG(CASE WHEN agreed_rate IS NOT NULL AND proposed_rate > 0
+			               THEN ABS(agreed_rate - proposed_rate) / proposed_rate * 100.0
+			               END), 0.0)                                            AS avg_spread_pct
+		FROM otc_orders
+		WHERE created_at >= $1 AND created_at < $2
+`
+
+	// OTCAnalyticsByPeriodQueryTpl: %s is replaced with the granularity (day/week/month).
+	OTCAnalyticsByPeriodQueryTpl = `
+		SELECT
+			TO_CHAR(DATE_TRUNC('%s', created_at), 'YYYY-MM-DD') AS period,
+			COUNT(*)                                              AS total,
+			COUNT(*) FILTER (WHERE status = 'completed')         AS completed,
+			COUNT(*) FILTER (WHERE status = 'cancelled')         AS cancelled,
+			COUNT(*) FILTER (WHERE status = 'expired')           AS expired,
+			COALESCE(SUM(CASE WHEN status = 'completed' THEN agreed_from_amount ELSE 0 END), 0) AS volume
+		FROM otc_orders
+		WHERE created_at >= $1 AND created_at < $2
+		GROUP BY DATE_TRUNC('%s', created_at)
+		ORDER BY DATE_TRUNC('%s', created_at) ASC
+`
+
+	// --- Export ---
+
+	OTCOrderExportBaseQuery = `
+		SELECT
+			o.uid,
+			o.status,
+			cu.email                AS client_email,
+			ou.email                AS operator_email,
+			fc.code                 AS from_currency_code,
+			tc.code                 AS to_currency_code,
+			o.from_amount,
+			o.proposed_rate,
+			o.agreed_rate,
+			o.agreed_from_amount,
+			o.to_amount,
+			o.cancel_reason,
+			o.created_at,
+			o.updated_at
+		FROM otc_orders o
+		JOIN  users      cu ON o.user_id       = cu.id
+		LEFT  JOIN users ou ON o.operator_id   = ou.id
+		JOIN  currencies fc ON o.from_currency_id = fc.id
+		JOIN  currencies tc ON o.to_currency_id   = tc.id
+`
 )

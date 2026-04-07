@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/caspianex/exchange-backend/internal/domain"
@@ -28,7 +31,8 @@ type otcOrderRepo interface {
 	UpdateConfig(ctx context.Context, config *domain.OTCConfig) error
 	DeleteConfig(ctx context.Context, id int64) error
 	ListByUser(ctx context.Context, userID int64, limit, offset int, status string) ([]domain.OTCOrder, int64, error)
-	ListAll(ctx context.Context, limit, offset int, status, email string) ([]domain.OTCOrder, int64, error)
+	ListAll(ctx context.Context, limit, offset int, filter domain.OTCListFilter) ([]domain.OTCOrder, int64, error)
+	ListAllForExport(ctx context.Context, filter domain.OTCListFilter) ([]domain.OTCOrderExportRow, error)
 	Take(ctx context.Context, orderID, operatorID int64) error
 	CreateMessage(ctx context.Context, msg *domain.OTCMessage) error
 	GetMessageByID(ctx context.Context, msgID int64) (*domain.OTCMessage, error)
@@ -39,6 +43,9 @@ type otcOrderRepo interface {
 	SetPaymentReceived(ctx context.Context, orderID int64) error
 	CompleteOrderAtomic(ctx context.Context, orderID, fromWalletID, toWalletID, userID int64, fromAmount, agreedFromAmount, toAmount float64, orderUID string) error
 	Expire(ctx context.Context, orderID int64) (bool, error)
+	CreateAuditLog(ctx context.Context, entry *domain.OTCAuditLog) error
+	GetAuditLogs(ctx context.Context, orderID int64) ([]domain.OTCAuditLog, error)
+	GetAnalytics(ctx context.Context, fromDate, toDate time.Time, granularity string) (*domain.OTCAnalytics, error)
 }
 
 // otcUserRepo is the subset of UserRepository used by OTCService.
@@ -195,8 +202,82 @@ func (s *OTCService) ListByUser(ctx context.Context, userID int64, limit, offset
 	return s.otcRepo.ListByUser(ctx, userID, limit, offset, status)
 }
 
-func (s *OTCService) ListAll(ctx context.Context, limit, offset int, status, email string) ([]domain.OTCOrder, int64, error) {
-	return s.otcRepo.ListAll(ctx, limit, offset, status, email)
+func (s *OTCService) ListAll(ctx context.Context, limit, offset int, filter domain.OTCListFilter) ([]domain.OTCOrder, int64, error) {
+	return s.otcRepo.ListAll(ctx, limit, offset, filter)
+}
+
+func (s *OTCService) GetAuditLogs(ctx context.Context, uid string) ([]domain.OTCAuditLog, error) {
+	order, err := s.otcRepo.GetByUID(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	return s.otcRepo.GetAuditLogs(ctx, order.ID)
+}
+
+func (s *OTCService) GetAnalytics(ctx context.Context, fromDate, toDate time.Time, granularity string) (*domain.OTCAnalytics, error) {
+	return s.otcRepo.GetAnalytics(ctx, fromDate, toDate, granularity)
+}
+
+func (s *OTCService) ExportOrdersCSV(ctx context.Context, filter domain.OTCListFilter, w io.Writer) error {
+	rows, err := s.otcRepo.ListAllForExport(ctx, filter)
+	if err != nil {
+		return err
+	}
+
+	cw := csv.NewWriter(w)
+	headers := []string{
+		"UID", "Status", "Client Email", "Operator Email",
+		"From Currency", "To Currency",
+		"From Amount", "Proposed Rate", "Agreed Rate", "Agreed From Amount", "To Amount",
+		"Cancel Reason", "Created At", "Updated At",
+	}
+	if err := cw.Write(headers); err != nil {
+		return err
+	}
+
+	for _, r := range rows {
+		operatorEmail := ""
+		if r.OperatorEmail != nil {
+			operatorEmail = *r.OperatorEmail
+		}
+		agreedRate := ""
+		if r.AgreedRate != nil {
+			agreedRate = fmt.Sprintf("%.8f", *r.AgreedRate)
+		}
+		agreedFromAmount := ""
+		if r.AgreedFromAmount != nil {
+			agreedFromAmount = fmt.Sprintf("%.8f", *r.AgreedFromAmount)
+		}
+		toAmount := ""
+		if r.ToAmount != nil {
+			toAmount = fmt.Sprintf("%.8f", *r.ToAmount)
+		}
+		cancelReason := ""
+		if r.CancelReason != nil {
+			cancelReason = *r.CancelReason
+		}
+		record := []string{
+			r.UID,
+			r.Status,
+			r.ClientEmail,
+			operatorEmail,
+			r.FromCurrencyCode,
+			r.ToCurrencyCode,
+			fmt.Sprintf("%.8f", r.FromAmount),
+			fmt.Sprintf("%.8f", r.ProposedRate),
+			agreedRate,
+			agreedFromAmount,
+			toAmount,
+			cancelReason,
+			r.CreatedAt.UTC().Format(time.RFC3339),
+			r.UpdatedAt.UTC().Format(time.RFC3339),
+		}
+		if err := cw.Write(record); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
 }
 
 func (s *OTCService) TakeOrder(ctx context.Context, uid string, operatorID int64) error {
@@ -207,7 +288,16 @@ func (s *OTCService) TakeOrder(ctx context.Context, uid string, operatorID int64
 	if order.Status != domain.OTCStatusAwaitingReview {
 		return fmt.Errorf("order must be in awaiting_review status to take")
 	}
-	return s.otcRepo.Take(ctx, order.ID, operatorID)
+	if err := s.otcRepo.Take(ctx, order.ID, operatorID); err != nil {
+		return err
+	}
+	user, _ := s.userRepo.GetByID(ctx, operatorID)
+	role := "operator"
+	if user != nil {
+		role = string(user.Role)
+	}
+	s.logAudit(order.ID, operatorID, role, domain.OTCAuditActionTookOrder, nil)
+	return nil
 }
 
 func (s *OTCService) SendMessage(ctx context.Context, uid string, senderID int64, senderRole, content string) (*domain.OTCMessage, error) {
@@ -263,6 +353,8 @@ func (s *OTCService) SendOffer(ctx context.Context, uid string, senderID int64, 
 	if err := s.otcRepo.CreateMessage(ctx, msg); err != nil {
 		return nil, err
 	}
+	s.logAudit(order.ID, senderID, senderRole, domain.OTCAuditActionSentOffer,
+		map[string]interface{}{"rate": offerRate, "from_amount": offerFromAmount, "to_amount": offerToAmount})
 	return msg, nil
 }
 
@@ -297,7 +389,12 @@ func (s *OTCService) AcceptOffer(ctx context.Context, uid string, messageID, acc
 	}
 
 	deadline := time.Now().Add(30 * time.Minute)
-	return s.otcRepo.Agree(ctx, order.ID, *msg.OfferRate, *msg.OfferFromAmount, *msg.OfferToAmount, deadline)
+	if err := s.otcRepo.Agree(ctx, order.ID, *msg.OfferRate, *msg.OfferFromAmount, *msg.OfferToAmount, deadline); err != nil {
+		return err
+	}
+	s.logAudit(order.ID, acceptorID, msg.SenderRole, domain.OTCAuditActionAcceptedOffer,
+		map[string]interface{}{"message_id": messageID})
+	return nil
 }
 
 func (s *OTCService) RejectOffer(ctx context.Context, uid string, messageID, rejectorID int64) error {
@@ -326,7 +423,12 @@ func (s *OTCService) RejectOffer(ctx context.Context, uid string, messageID, rej
 		return fmt.Errorf("cannot reject your own offer")
 	}
 
-	return s.otcRepo.UpdateOfferStatus(ctx, messageID, domain.OTCOfferStatusRejected)
+	if err := s.otcRepo.UpdateOfferStatus(ctx, messageID, domain.OTCOfferStatusRejected); err != nil {
+		return err
+	}
+	s.logAudit(order.ID, rejectorID, msg.SenderRole, domain.OTCAuditActionRejectedOffer,
+		map[string]interface{}{"message_id": messageID})
+	return nil
 }
 
 func (s *OTCService) CancelOrder(ctx context.Context, uid string, callerID int64, callerRole, reason string) error {
@@ -367,6 +469,8 @@ func (s *OTCService) CancelOrder(ctx context.Context, uid string, callerID int64
 	if err == nil {
 		_ = s.walletRepo.UnlockAmount(ctx, fromWallet.ID, order.FromAmount)
 	}
+	s.logAudit(order.ID, callerID, callerRole, domain.OTCAuditActionCancelled,
+		map[string]interface{}{"reason": reason})
 	return nil
 }
 
@@ -381,7 +485,11 @@ func (s *OTCService) ConfirmPaymentReceived(ctx context.Context, uid string, ope
 	if order.OperatorID == nil || *order.OperatorID != operatorID {
 		return fmt.Errorf("only the assigned operator can confirm payment")
 	}
-	return s.otcRepo.SetPaymentReceived(ctx, order.ID)
+	if err := s.otcRepo.SetPaymentReceived(ctx, order.ID); err != nil {
+		return err
+	}
+	s.logAudit(order.ID, operatorID, "operator", domain.OTCAuditActionConfirmedPayment, nil)
+	return nil
 }
 
 func (s *OTCService) CompleteOrder(ctx context.Context, uid string, operatorID int64) error {
@@ -423,6 +531,7 @@ func (s *OTCService) CompleteOrder(ctx context.Context, uid string, operatorID i
 	_ = s.walletRepo.RefreshWalletCache(ctx, fromWallet.ID)
 	_ = s.walletRepo.RefreshWalletCache(ctx, toWallet.ID)
 
+	s.logAudit(order.ID, operatorID, "operator", domain.OTCAuditActionCompleted, nil)
 	return nil
 }
 
@@ -473,6 +582,29 @@ func (s *OTCService) UpdateConfig(ctx context.Context, id int64, minFromAmount f
 
 func (s *OTCService) DeleteConfig(ctx context.Context, id int64) error {
 	return s.otcRepo.DeleteConfig(ctx, id)
+}
+
+// logAudit writes an audit entry in the background. Failures are silently dropped
+// so that a logging error never rolls back the primary operation.
+func (s *OTCService) logAudit(orderID, actorID int64, actorRole, action string, details interface{}) {
+	var detailsStr *string
+	if details != nil {
+		b, err := json.Marshal(details)
+		if err == nil {
+			s := string(b)
+			detailsStr = &s
+		}
+	}
+	entry := &domain.OTCAuditLog{
+		OrderID:   orderID,
+		ActorID:   actorID,
+		ActorRole: actorRole,
+		Action:    action,
+		Details:   detailsStr,
+	}
+	go func() {
+		_ = s.otcRepo.CreateAuditLog(context.Background(), entry)
+	}()
 }
 
 func (s *OTCService) isOrderParticipant(order *domain.OTCOrderDetail, userID int64) bool {

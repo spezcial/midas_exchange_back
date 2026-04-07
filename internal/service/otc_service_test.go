@@ -48,8 +48,18 @@ func (m *mockOTCRepo) GetByUID(_ context.Context, _ string) (*domain.OTCOrderDet
 func (m *mockOTCRepo) ListByUser(_ context.Context, _ int64, _, _ int, _ string) ([]domain.OTCOrder, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockOTCRepo) ListAll(_ context.Context, _, _ int, _, _ string) ([]domain.OTCOrder, int64, error) {
+func (m *mockOTCRepo) ListAll(_ context.Context, _, _ int, _ domain.OTCListFilter) ([]domain.OTCOrder, int64, error) {
 	return nil, 0, nil
+}
+func (m *mockOTCRepo) ListAllForExport(_ context.Context, _ domain.OTCListFilter) ([]domain.OTCOrderExportRow, error) {
+	return nil, nil
+}
+func (m *mockOTCRepo) CreateAuditLog(_ context.Context, _ *domain.OTCAuditLog) error { return nil }
+func (m *mockOTCRepo) GetAuditLogs(_ context.Context, _ int64) ([]domain.OTCAuditLog, error) {
+	return nil, nil
+}
+func (m *mockOTCRepo) GetAnalytics(_ context.Context, _, _ time.Time, _ string) (*domain.OTCAnalytics, error) {
+	return nil, nil
 }
 func (m *mockOTCRepo) Take(_ context.Context, _, _ int64) error {
 	m.takeCalled = true

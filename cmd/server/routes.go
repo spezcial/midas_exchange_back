@@ -168,9 +168,13 @@ func apiV1(
 			r.With(authMiddleware.RequireRole("admin", "super_admin")).Post("/config", otcAdminHandler.CreateConfig)
 			r.With(authMiddleware.RequireRole("admin", "super_admin")).Put("/config/{id}", otcAdminHandler.UpdateConfig)
 			r.With(authMiddleware.RequireRole("admin", "super_admin")).Delete("/config/{id}", otcAdminHandler.DeleteConfig)
+			// Analytics & reporting
+			r.Get("/analytics", otcAdminHandler.GetAnalytics)
+			r.Get("/orders/export", otcAdminHandler.ExportOrders)
 			// Orders
 			r.Get("/orders", otcAdminHandler.ListOrders)
 			r.Get("/orders/{uid}", otcAdminHandler.GetOrder)
+			r.Get("/orders/{uid}/audit-log", otcAdminHandler.GetAuditLog)
 			r.Put("/orders/{uid}/take", otcAdminHandler.TakeOrder)
 			r.Post("/orders/{uid}/messages", otcAdminHandler.SendMessage)
 			r.Post("/orders/{uid}/offers", otcAdminHandler.SendOffer)

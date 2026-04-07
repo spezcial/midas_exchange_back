@@ -12,6 +12,9 @@ import (
 	"github.com/caspianex/exchange-backend/pkg/database"
 )
 
+// validGranularities guards against SQL injection in the analytics query.
+var validGranularities = map[string]bool{"day": true, "week": true, "month": true}
+
 type OTCRepository struct {
 	db    *database.Postgres
 	cache *cache.CacheService
@@ -182,54 +185,59 @@ func (r *OTCRepository) ListByUser(ctx context.Context, userID int64, limit, off
 	return orders, total, nil
 }
 
-func (r *OTCRepository) ListAll(ctx context.Context, limit, offset int, status, email string) ([]domain.OTCOrder, int64, error) {
-	// For admin listing; email filter joins users table
-	var (
-		countQuery string
-		listQuery  string
-		countArgs  []interface{}
-		listArgs   []interface{}
-	)
+func (r *OTCRepository) ListAll(ctx context.Context, limit, offset int, filter domain.OTCListFilter) ([]domain.OTCOrder, int64, error) {
+	needsUserJoin := filter.Email != ""
 
-	if email != "" {
-		emailPattern := "%" + email + "%"
-		countQuery = `SELECT COUNT(*) FROM otc_orders o JOIN users u ON o.user_id = u.id WHERE u.email ILIKE $1`
-		listQuery = `SELECT o.id, o.uid, o.user_id, o.operator_id, o.from_currency_id, o.to_currency_id,
-			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
-			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline, o.created_at, o.updated_at,
-			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count
-			FROM otc_orders o JOIN users u ON o.user_id = u.id WHERE u.email ILIKE $1`
-		countArgs = []interface{}{emailPattern}
-		listArgs = []interface{}{emailPattern}
-
-		if status != "" {
-			countQuery += " AND o.status = $2"
-			listQuery += " AND o.status = $2"
-			countArgs = append(countArgs, status)
-			listArgs = append(listArgs, status)
-			listQuery += fmt.Sprintf(" ORDER BY o.created_at DESC LIMIT $3 OFFSET $4")
-			listArgs = append(listArgs, limit, offset)
-		} else {
-			listQuery += fmt.Sprintf(" ORDER BY o.created_at DESC LIMIT $2 OFFSET $3")
-			listArgs = append(listArgs, limit, offset)
-		}
+	var fromClause string
+	if needsUserJoin {
+		fromClause = "FROM otc_orders o JOIN users u ON o.user_id = u.id"
 	} else {
-		countQB := newQueryBuilder(queries.OTCOrderCountAllBaseQuery)
-		if status != "" {
-			countQB.AddWhere(fmt.Sprintf("status = $%d", countQB.paramCounter), status)
-		}
-		countQuery, countArgs = countQB.Build("", "")
-
-		listQB := newQueryBuilder(queries.OTCOrderListAllBaseQuery)
-		if status != "" {
-			listQB.AddWhere(fmt.Sprintf("status = $%d", listQB.paramCounter), status)
-		}
-		listQuery, listArgs = listQB.Build(
-			"ORDER BY created_at DESC",
-			fmt.Sprintf("LIMIT $%d OFFSET $%d", listQB.paramCounter, listQB.paramCounter+1),
-		)
-		listArgs = append(listArgs, limit, offset)
+		fromClause = "FROM otc_orders o"
 	}
+
+	countBase := "SELECT COUNT(*) " + fromClause
+	listBase := `SELECT o.id, o.uid, o.user_id, o.operator_id, o.from_currency_id, o.to_currency_id,
+		o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
+		o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline, o.created_at, o.updated_at,
+		(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count ` +
+		fromClause
+
+	countQB := newQueryBuilder(countBase)
+	listQB := newQueryBuilder(listBase)
+
+	addFilter := func(condition string, arg interface{}) {
+		countQB.AddWhere(fmt.Sprintf(condition, countQB.paramCounter), arg)
+		listQB.AddWhere(fmt.Sprintf(condition, listQB.paramCounter), arg)
+	}
+
+	if filter.Email != "" {
+		addFilter("u.email ILIKE $%d", "%"+filter.Email+"%")
+	}
+	if filter.Status != "" {
+		addFilter("o.status = $%d", filter.Status)
+	}
+	if filter.FromDate != nil {
+		addFilter("o.created_at >= $%d", filter.FromDate)
+	}
+	if filter.ToDate != nil {
+		addFilter("o.created_at < $%d", filter.ToDate)
+	}
+	if filter.FromCurrencyID != nil {
+		addFilter("o.from_currency_id = $%d", *filter.FromCurrencyID)
+	}
+	if filter.ToCurrencyID != nil {
+		addFilter("o.to_currency_id = $%d", *filter.ToCurrencyID)
+	}
+	if filter.OperatorID != nil {
+		addFilter("o.operator_id = $%d", *filter.OperatorID)
+	}
+
+	countQuery, countArgs := countQB.Build("", "")
+	listQuery, listArgs := listQB.Build(
+		"ORDER BY o.created_at DESC",
+		fmt.Sprintf("LIMIT $%d OFFSET $%d", listQB.paramCounter, listQB.paramCounter+1),
+	)
+	listArgs = append(listArgs, limit, offset)
 
 	var total int64
 	if err := r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
@@ -391,4 +399,81 @@ func (r *OTCRepository) UpdateOfferStatus(ctx context.Context, msgID int64, stat
 		return fmt.Errorf("offer is no longer pending")
 	}
 	return nil
+}
+
+// --- Audit log ---
+
+func (r *OTCRepository) CreateAuditLog(ctx context.Context, entry *domain.OTCAuditLog) error {
+	return r.db.QueryRowContext(
+		ctx, queries.OTCAuditLogCreateQuery,
+		entry.OrderID, entry.ActorID, entry.ActorRole, entry.Action, entry.Details,
+	).Scan(&entry.ID, &entry.CreatedAt)
+}
+
+func (r *OTCRepository) GetAuditLogs(ctx context.Context, orderID int64) ([]domain.OTCAuditLog, error) {
+	var logs []domain.OTCAuditLog
+	if err := r.db.SelectContext(ctx, &logs, queries.OTCAuditLogListByOrderQuery, orderID); err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
+// --- Analytics ---
+
+func (r *OTCRepository) GetAnalytics(ctx context.Context, fromDate, toDate time.Time, granularity string) (*domain.OTCAnalytics, error) {
+	if !validGranularities[granularity] {
+		granularity = "day"
+	}
+
+	var summary domain.OTCAnalyticsSummary
+	if err := r.db.GetContext(ctx, &summary, queries.OTCAnalyticsSummaryQuery, fromDate, toDate); err != nil {
+		return nil, fmt.Errorf("analytics summary: %w", err)
+	}
+	if summary.TotalOrders > 0 {
+		summary.ConversionRate = float64(summary.Completed) / float64(summary.TotalOrders) * 100.0
+	}
+
+	periodQuery := fmt.Sprintf(queries.OTCAnalyticsByPeriodQueryTpl, granularity, granularity, granularity)
+	var byPeriod []domain.OTCAnalyticsPeriod
+	if err := r.db.SelectContext(ctx, &byPeriod, periodQuery, fromDate, toDate); err != nil {
+		return nil, fmt.Errorf("analytics by period: %w", err)
+	}
+
+	return &domain.OTCAnalytics{Summary: summary, ByPeriod: byPeriod}, nil
+}
+
+// --- Export ---
+
+func (r *OTCRepository) ListAllForExport(ctx context.Context, filter domain.OTCListFilter) ([]domain.OTCOrderExportRow, error) {
+	qb := newQueryBuilder(queries.OTCOrderExportBaseQuery)
+
+	if filter.Email != "" {
+		qb.AddWhere(fmt.Sprintf("cu.email ILIKE $%d", qb.paramCounter), "%"+filter.Email+"%")
+	}
+	if filter.Status != "" {
+		qb.AddWhere(fmt.Sprintf("o.status = $%d", qb.paramCounter), filter.Status)
+	}
+	if filter.FromDate != nil {
+		qb.AddWhere(fmt.Sprintf("o.created_at >= $%d", qb.paramCounter), filter.FromDate)
+	}
+	if filter.ToDate != nil {
+		qb.AddWhere(fmt.Sprintf("o.created_at < $%d", qb.paramCounter), filter.ToDate)
+	}
+	if filter.FromCurrencyID != nil {
+		qb.AddWhere(fmt.Sprintf("o.from_currency_id = $%d", qb.paramCounter), *filter.FromCurrencyID)
+	}
+	if filter.ToCurrencyID != nil {
+		qb.AddWhere(fmt.Sprintf("o.to_currency_id = $%d", qb.paramCounter), *filter.ToCurrencyID)
+	}
+	if filter.OperatorID != nil {
+		qb.AddWhere(fmt.Sprintf("o.operator_id = $%d", qb.paramCounter), *filter.OperatorID)
+	}
+
+	query, args := qb.Build("ORDER BY o.created_at DESC", "")
+
+	var rows []domain.OTCOrderExportRow
+	if err := r.db.SelectContext(ctx, &rows, query, args...); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

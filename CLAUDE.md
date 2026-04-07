@@ -114,10 +114,28 @@ Clients with KYC level ≥ 2 can create OTC orders. Operators negotiate via in-o
 
 Key files: `internal/domain/otc.go`, `internal/service/otc_service.go`, `internal/repository/otc_repository.go`, `const/queries/otc_repo.go`, `internal/service/notification_service.go` (NoOp stub).
 
+### OTC-013: History & Reporting (implemented 2026-04-03)
+
+**New admin endpoints** (`/api/v1/admin/otc/`, role: admin/super_admin/operator):
+| Method | Path | Description |
+|---|---|---|
+| GET | `/analytics` | Aggregate stats + time-series breakdown |
+| GET | `/orders/export` | Stream CSV download |
+| GET | `/orders/{uid}/audit-log` | Operator action log for one order |
+
+**Extended `/admin/otc/orders` filter params:** `from_date`, `to_date` (YYYY-MM-DD), `from_currency_id`, `to_currency_id`, `operator_id` (in addition to `status`, `email`).
+
+**Analytics params:** `from`, `to` (YYYY-MM-DD), `granularity` (day/week/month).
+
+**Audit log** written automatically (fire-and-forget goroutine) after: took_order, sent_offer, accepted_offer, rejected_offer, confirmed_payment, completed, cancelled.
+
 ### Database
+
+**Always update CLAUDE.md** when adding migrations, new endpoints, or domain changes.
 
 PostgreSQL with golang-migrate. Migrations in `migrations/` directory:
 - `000001_init_schema` - Core tables (users, wallets, currencies, exchanges, transactions)
 - `000002_seed_currencies` - Pre-seeded crypto (BTC, ETH, USDT, etc.) and fiat (KZT, USD, EUR)
 - `000006_add_roles` - CHECK constraint on `users.role` for all valid role values
 - `000007_otc` - `otc_orders` and `otc_messages` tables
+- `000010_otc_audit_log` - `otc_audit_log` table (actor_id, actor_role, action, details, created_at)
