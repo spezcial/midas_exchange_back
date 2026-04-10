@@ -17,9 +17,11 @@ const (
 			c.id as "currency.id", c.code as "currency.code", c.name as "currency.name",
 			c.symbol as "currency.symbol", c.is_active as "currency.is_active",
 			c.is_crypto as "currency.is_crypto", c.created_at as "currency.created_at",
-			c.updated_at as "currency.updated_at"
+			c.updated_at as "currency.updated_at",
+			da.address as deposit_address
 		FROM wallets w
 		JOIN currencies c ON w.currency_id = c.id
+		LEFT JOIN crypto_deposit_addresses da ON da.user_id = w.user_id AND da.currency_id = w.currency_id
 		WHERE w.user_id = $1
 		ORDER BY c.code
 `

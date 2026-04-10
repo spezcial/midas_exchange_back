@@ -27,5 +27,6 @@ type Wallet struct {
 
 type WalletWithCurrency struct {
 	Wallet
-	Currency Currency `json:"currency"`
+	Currency       Currency `json:"currency"`
+	DepositAddress *string  `db:"deposit_address" json:"deposit_address"`
 }
