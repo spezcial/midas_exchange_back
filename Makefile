@@ -89,7 +89,7 @@ db-deactivate-unsupported-currencies: ## Deactivate currencies not supported by 
 
 backfill-deposit-addresses: ## Create missing crypto deposit addresses for all existing users (requires CRYPTO_GATE_URL/TOKEN)
 	@echo "$(CYAN)Backfilling deposit addresses...$(NC)"
-	go run ./cmd/backfill_deposit_addresses
+	DB_HOST=localhost go run ./cmd/backfill_deposit_addresses
 	@echo "$(GREEN)✓ Done$(NC)"
 
 # Code Quality Commands

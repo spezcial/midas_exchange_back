@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-clear-users db-list-users status ps admin-promote docker-prune
+.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-clear-users db-list-users backfill-deposit-addresses status ps admin-promote docker-prune
 
 COMPOSE := docker compose -f docker-compose.prod.yml
 
@@ -65,6 +65,13 @@ db-reset: ## Reset database — WARNING: deletes ALL data
 	@sleep 5
 	$(COMPOSE) up migrate
 	@echo "$(GREEN)✓ Database reset complete$(NC)"
+
+# ── Backfill ──────────────────────────────────────────────────────────────────
+
+backfill-deposit-addresses: ## Create missing crypto deposit addresses for all existing users
+	@echo "$(CYAN)Backfilling deposit addresses...$(NC)"
+	$(COMPOSE) run --rm app ./backfill_deposit_addresses
+	@echo "$(GREEN)✓ Done$(NC)"
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
