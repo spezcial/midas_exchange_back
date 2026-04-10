@@ -81,11 +81,13 @@ func main() {
 	exchangeRateRepo := repository.NewExchangeRateRepository(db, cacheService)
 	oauthRepo := repository.NewOAuthRepository(db)
 	addrRepo := repository.NewDepositAddressRepository(db)
+	feeRepo := repository.NewPlatformFeeRepository(db)
 
 	// Initialize services
+	feeService := service.NewPlatformFeeService(feeRepo, log)
 	authService := service.NewAuthService(userRepo, walletRepo, jwtManager, emailService, cfg.App.BcryptCost, log)
 	userService := service.NewUserService(userRepo, walletRepo, cfg.App.BcryptCost)
-	walletService := service.NewWalletService(walletRepo, txRepo)
+	walletService := service.NewWalletService(walletRepo, txRepo, feeService)
 
 	// Wire up crypto-gate integration when configured
 	var cgService *service.CryptoGateService
@@ -105,7 +107,7 @@ func main() {
 	} else {
 		log.Info("Crypto-gate integration disabled (CRYPTO_GATE_URL/TOKEN not set)")
 	}
-	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService)
+	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService, feeService)
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)
 	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
 
@@ -137,6 +139,7 @@ func main() {
 		exchangeRatesService,
 		oauthService,
 		otcService,
+		feeService,
 		cgService,
 		rateUpdater,
 	)

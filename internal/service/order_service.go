@@ -16,6 +16,7 @@ type CurrencyExchangeService struct {
 	walletRepo   *repository.WalletRepository
 	userRepo     *repository.UserRepository
 	emailService *email.EmailService
+	feeService   *PlatformFeeService
 }
 
 func NewCurrencyExchangeService(
@@ -23,12 +24,14 @@ func NewCurrencyExchangeService(
 	walletRepo *repository.WalletRepository,
 	userRepo *repository.UserRepository,
 	emailService *email.EmailService,
+	feeService *PlatformFeeService,
 ) *CurrencyExchangeService {
 	return &CurrencyExchangeService{
 		exchangeRepo: exchangeRepo,
 		walletRepo:   walletRepo,
 		userRepo:     userRepo,
 		emailService: emailService,
+		feeService:   feeService,
 	}
 }
 
@@ -95,6 +98,12 @@ func (s *CurrencyExchangeService) CreateExchange(ctx context.Context, userID int
 		_ = s.walletRepo.AtomicCredit(ctx, fromWallet.ID, req.FromAmount)
 		_ = s.walletRepo.AtomicDeduct(ctx, toWallet.ID, toAmountWithFee)
 		return nil, fmt.Errorf("failed to create exchange: %w", err)
+	}
+
+	// Record exchange fee in platform ledger (fire-and-forget).
+	feeAmount := toAmount - toAmountWithFee
+	if feeAmount > 0 {
+		s.feeService.Record(userID, domain.FeeOperationExchange, toCurrency.ID, toAmount, feeAmount)
 	}
 
 	// Send notification email — guard against nil user (GetByID failure must not panic).

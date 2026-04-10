@@ -12,16 +12,19 @@ import (
 type WalletService struct {
 	walletRepo *repository.WalletRepository
 	txRepo     *repository.TransactionRepository
+	feeService *PlatformFeeService
 	cgService  *CryptoGateService // optional; nil if crypto-gate is not configured
 }
 
 func NewWalletService(
 	walletRepo *repository.WalletRepository,
 	txRepo *repository.TransactionRepository,
+	feeService *PlatformFeeService,
 ) *WalletService {
 	return &WalletService{
 		walletRepo: walletRepo,
 		txRepo:     txRepo,
+		feeService: feeService,
 	}
 }
 
@@ -106,6 +109,12 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 	tx.Status = domain.TransactionStatusCompleted
 	if err := s.txRepo.Update(ctx, tx); err != nil {
 		return nil, err
+	}
+
+	// Record withdrawal fee in platform ledger (fire-and-forget).
+	// Crypto on-chain withdrawals carry no platform fee (fee == 0), so this is fiat-only in practice.
+	if fee > 0 {
+		s.feeService.Record(userID, domain.FeeOperationWithdrawal, currency.ID, req.Amount, fee)
 	}
 
 	return tx, nil

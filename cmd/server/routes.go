@@ -28,6 +28,7 @@ func setupRouter(
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
 	otcService *service.OTCService,
+	feeService *service.PlatformFeeService,
 	cgService *service.CryptoGateService, // nil when not configured
 	rateUpdater *worker.RateUpdater,
 ) http.Handler {
@@ -52,7 +53,7 @@ func setupRouter(
 		r.Post("/cg/withdraw", cgHandler.HandleWithdraw)
 	}
 
-	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService, cgService, otcHub))
+	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService, feeService, cgService, otcHub))
 
 	return r
 }
@@ -68,6 +69,7 @@ func apiV1(
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
 	otcService *service.OTCService,
+	feeService *service.PlatformFeeService,
 	cgService *service.CryptoGateService, // nil when not configured
 	otcHub *OTCHub,
 ) chi.Router {
@@ -160,6 +162,9 @@ func apiV1(
 
 		walletHandler := admin.NewWalletHandler(walletService)
 		r.Post("/wallets/deposit", walletHandler.ManualDeposit)
+
+		feeHandler := admin.NewPlatformFeeHandler(feeService)
+		r.Get("/platform-fees", feeHandler.ListFees)
 
 		if cgService != nil {
 			cryptoHandler := admin.NewCryptoHandler(cgService, log)
