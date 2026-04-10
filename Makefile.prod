@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell status ps admin-promote docker-prune
+.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-clear-users db-list-users status ps admin-promote docker-prune
 
 COMPOSE := docker compose -f docker-compose.prod.yml
 
@@ -67,6 +67,19 @@ db-reset: ## Reset database — WARNING: deletes ALL data
 	@echo "$(GREEN)✓ Database reset complete$(NC)"
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
+
+db-list-users: ## List latest 50 client users
+	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db} \
+		-c "SELECT id, email, first_name, last_name, is_active, created_at FROM users WHERE role = 'client' ORDER BY created_at DESC LIMIT 50;"
+
+db-clear-users: ## ⚠️  Delete ALL client users and their data
+	@echo "$(RED)⚠️  WARNING: This will permanently delete ALL client users in production.$(NC)"
+	@echo "$(YELLOW)You have 5 seconds to cancel (Ctrl+C)...$(NC)"
+	@sleep 5
+	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db} \
+		-c "DELETE FROM otc_orders WHERE user_id IN (SELECT id FROM users WHERE role = 'client'); \
+		    DELETE FROM users WHERE role = 'client';"
+	@echo "$(GREEN)✓ All client users cleared$(NC)"
 
 admin-promote: ## Promote a user to admin — usage: make admin-promote EMAIL=user@example.com
 	@if [ -z "$(EMAIL)" ]; then \
