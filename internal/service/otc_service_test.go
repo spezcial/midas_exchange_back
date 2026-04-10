@@ -585,7 +585,7 @@ func TestAcceptOffer_CannotAcceptOwnOffer(t *testing.T) {
 	otcRepo := &mockOTCRepo{order: order, message: msg}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.AcceptOffer(context.Background(), "abc", 1, 42) // same sender as acceptor
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 42, "client") // same sender as acceptor
 	if err == nil || err.Error() != "cannot accept your own offer" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -604,7 +604,7 @@ func TestAcceptOffer_AlreadyNotPending(t *testing.T) {
 	otcRepo := &mockOTCRepo{order: order, message: msg}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.AcceptOffer(context.Background(), "abc", 1, 99)
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 99, "client")
 	if err == nil || err.Error() != "offer is no longer pending" {
 		t.Errorf("unexpected error: %v", err)
 	}

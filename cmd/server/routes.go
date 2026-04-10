@@ -7,6 +7,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/api/client"
 	"github.com/caspianex/exchange-backend/internal/api/health"
 	"github.com/caspianex/exchange-backend/internal/api/middleware"
+	"github.com/caspianex/exchange-backend/internal/api/webhook"
 	"github.com/caspianex/exchange-backend/internal/service"
 	"github.com/caspianex/exchange-backend/pkg/auth"
 	"github.com/caspianex/exchange-backend/pkg/config"
@@ -27,6 +28,7 @@ func setupRouter(
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
 	otcService *service.OTCService,
+	cgService *service.CryptoGateService, // nil when not configured
 	rateUpdater *worker.RateUpdater,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -43,7 +45,14 @@ func setupRouter(
 	r.Get("/health/live", healthHandler.Live)
 	r.Get("/health/ready", healthHandler.Ready)
 
-	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService, otcHub))
+	// Crypto-gate webhook endpoints (no auth middleware — secured by X-Secret header)
+	if cgService != nil {
+		cgHandler := webhook.NewCryptoGateHandler(cgService, cfg.CryptoGate.WebhookSecret, log)
+		r.Post("/cg/deposit", cgHandler.HandleDeposit)
+		r.Post("/cg/withdraw", cgHandler.HandleWithdraw)
+	}
+
+	r.Mount("/api/v1", apiV1(cfg, log, jwtManager, authService, userService, walletService, exchangeService, exchangeRateService, oauthService, otcService, cgService, otcHub))
 
 	return r
 }
@@ -59,6 +68,7 @@ func apiV1(
 	exchangeRateService *service.ExchangeRatesService,
 	oauthService *service.OAuthService,
 	otcService *service.OTCService,
+	cgService *service.CryptoGateService, // nil when not configured
 	otcHub *OTCHub,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -99,15 +109,18 @@ func apiV1(
 		walletHandler := client.NewWalletHandler(walletService)
 		r.Get("/wallet/currencies", walletHandler.GetAllCurrencies)
 		r.Get("/wallets", walletHandler.GetWallets)
-		r.Post("/wallets/deposit", walletHandler.Deposit)
 		r.Post("/wallets/withdraw", walletHandler.Withdraw)
 		r.Get("/transactions", walletHandler.GetTransactions)
+
+		if cgService != nil {
+			depositAddrHandler := client.NewDepositAddressHandler(cgService, log)
+			r.Get("/wallets/deposit-address", depositAddrHandler.GetDepositAddress)
+		}
 
 		exchangeHandler := client.NewExchangeHandler(exchangeService)
 		r.Post("/exchanges", exchangeHandler.CreateExchange)
 		r.Get("/exchanges", exchangeHandler.GetExchanges)
 		r.Get("/exchanges/{id}", exchangeHandler.GetExchange)
-		r.Delete("/exchanges/{id}", exchangeHandler.CancelExchange)
 
 		otcHandler := client.NewOTCHandler(otcService, otcHub)
 		r.Route("/otc", func(r chi.Router) {
@@ -132,7 +145,6 @@ func apiV1(
 		r.Get("/users", userHandler.ListUsers)
 		r.Get("/users/{id}", userHandler.GetUser)
 		r.Get("/users/{id}/profile", userHandler.GetProfile)
-		r.Post("/users/{id}/profile", userHandler.SetProfile)
 		r.Put("/users/{id}/profile", userHandler.UpdateProfile)
 
 		exchangeHandler := admin.NewExchangeHandler(exchangeService)
@@ -148,6 +160,11 @@ func apiV1(
 
 		walletHandler := admin.NewWalletHandler(walletService)
 		r.Post("/wallets/deposit", walletHandler.ManualDeposit)
+
+		if cgService != nil {
+			cryptoHandler := admin.NewCryptoHandler(cgService, log)
+			r.With(authMiddleware.RequireRole("super_admin")).Get("/crypto/audit", cryptoHandler.AuditAddresses)
+		}
 
 		// Super-admin only: staff management
 		staffHandler := admin.NewStaffHandler(userService)

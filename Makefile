@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs app-refresh build clean db-migrate db-reset db-shell test fmt vet
+.PHONY: help up down restart logs app-refresh build clean db-migrate db-reset db-shell db-deactivate-unsupported-currencies db-clear-users test fmt vet backfill-deposit-addresses
 
 # Colors for terminal output
 CYAN := \033[0;36m
@@ -72,6 +72,25 @@ db-reset: ## Reset database (WARNING: deletes all data)
 
 db-shell: ## Open PostgreSQL shell
 	docker-compose exec postgres psql -U exchange -d exchange_db
+
+db-clear-users: ## ⚠️  PRE-LAUNCH ONLY: delete all client users and their data (wallets, transactions, OTC orders, deposit addresses)
+	@echo "$(YELLOW)⚠️  This will permanently delete ALL client users and their data. Press Ctrl+C to cancel...$(NC)"
+	@sleep 3
+	docker-compose exec postgres psql -U exchange -d exchange_db -c \
+		"DELETE FROM otc_orders WHERE user_id IN (SELECT id FROM users WHERE role = 'client'); \
+		 DELETE FROM users WHERE role = 'client';"
+	@echo "$(GREEN)✓ All client users cleared$(NC)"
+
+db-deactivate-unsupported-currencies: ## Deactivate currencies not supported by crypto-gate (SOL, XRP, ADA, DOGE)
+	@echo "$(YELLOW)Deactivating unsupported currencies: SOL, XRP, ADA, DOGE$(NC)"
+	docker-compose exec postgres psql -U exchange -d exchange_db -c \
+		"UPDATE currencies SET is_active = false WHERE code IN ('SOL', 'XRP', 'ADA', 'DOGE');"
+	@echo "$(GREEN)✓ Done$(NC)"
+
+backfill-deposit-addresses: ## Create missing crypto deposit addresses for all existing users (requires CRYPTO_GATE_URL/TOKEN)
+	@echo "$(CYAN)Backfilling deposit addresses...$(NC)"
+	go run ./cmd/backfill_deposit_addresses
+	@echo "$(GREEN)✓ Done$(NC)"
 
 # Code Quality Commands
 fmt: ## Format Go code

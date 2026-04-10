@@ -9,6 +9,7 @@ type DepositRequest struct {
 type WithdrawRequest struct {
 	CurrencyCode string  `json:"currency_code" validate:"required"`
 	Amount       float64 `json:"amount" validate:"required,gt=0"`
+	ToAddress    string  `json:"to_address"` // blockchain address for crypto withdrawals
 }
 
 type AdminDepositRequest struct {

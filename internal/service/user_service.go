@@ -174,15 +174,6 @@ type UserWithWallets struct {
 	Wallets []domain.WalletWithCurrency `json:"wallets"`
 }
 
-func (s *UserService) GetUser(ctx context.Context, userID int64) (*domain.User, error) {
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	user.PasswordHash = ""
-	return user, nil
-}
-
 func (s *UserService) GetUserWithWallets(ctx context.Context, userID int64) (*UserWithWallets, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -217,10 +208,6 @@ func (s *UserService) ListUsers(ctx context.Context, limit, offset int, email st
 	}
 
 	return users, total, nil
-}
-
-func (s *UserService) UpdateUser(ctx context.Context, user *domain.User) error {
-	return s.userRepo.Update(ctx, user)
 }
 
 type UserProfile struct {

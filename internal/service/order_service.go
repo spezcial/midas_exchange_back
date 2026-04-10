@@ -65,25 +65,18 @@ func (s *CurrencyExchangeService) CreateExchange(ctx context.Context, userID int
 		return nil, fmt.Errorf("to wallet not found: %w", err)
 	}
 
-	// Check sufficient balance
-	if fromWallet.Balance < req.FromAmount {
-		return nil, fmt.Errorf("insufficient balance")
-	}
-
-	// Perform wallet swap: deduct from fromWallet, credit to toWallet
-	newFromBalance := fromWallet.Balance - req.FromAmount
-	if err := s.walletRepo.UpdateBalance(ctx, fromWallet.ID, newFromBalance, fromWallet.Locked); err != nil {
+	// AtomicDeduct checks and deducts in one SQL UPDATE — no read-then-check race.
+	if err := s.walletRepo.AtomicDeduct(ctx, fromWallet.ID, req.FromAmount); err != nil {
 		return nil, fmt.Errorf("failed to deduct from wallet: %w", err)
 	}
 
-	newToBalance := toWallet.Balance + toAmountWithFee
-	if err := s.walletRepo.UpdateBalance(ctx, toWallet.ID, newToBalance, toWallet.Locked); err != nil {
-		// Rollback the first update
-		s.walletRepo.UpdateBalance(ctx, fromWallet.ID, fromWallet.Balance, fromWallet.Locked)
+	// AtomicCredit increments via balance = balance + $1 — no read-modify-write race.
+	if err := s.walletRepo.AtomicCredit(ctx, toWallet.ID, toAmountWithFee); err != nil {
+		// Deduct succeeded — refund before returning.
+		_ = s.walletRepo.AtomicCredit(ctx, fromWallet.ID, req.FromAmount)
 		return nil, fmt.Errorf("failed to credit to wallet: %w", err)
 	}
 
-	// Create exchange record
 	exchange := &domain.CurrencyExchange{
 		UID:             uuid.New().String(),
 		UserID:          userID,
@@ -98,15 +91,17 @@ func (s *CurrencyExchangeService) CreateExchange(ctx context.Context, userID int
 	}
 
 	if err := s.exchangeRepo.Create(ctx, exchange); err != nil {
-		// Rollback wallet updates
-		s.walletRepo.UpdateBalance(ctx, fromWallet.ID, fromWallet.Balance, fromWallet.Locked)
-		s.walletRepo.UpdateBalance(ctx, toWallet.ID, toWallet.Balance, toWallet.Locked)
+		// Both wallet ops succeeded — undo them with their atomic inverses.
+		_ = s.walletRepo.AtomicCredit(ctx, fromWallet.ID, req.FromAmount)
+		_ = s.walletRepo.AtomicDeduct(ctx, toWallet.ID, toAmountWithFee)
 		return nil, fmt.Errorf("failed to create exchange: %w", err)
 	}
 
-	// Send notification email
+	// Send notification email — guard against nil user (GetByID failure must not panic).
 	user, _ := s.userRepo.GetByID(ctx, userID)
-	go s.emailService.SendOrderCreatedEmail(user.Email, user.FirstName, exchange)
+	if user != nil {
+		go s.emailService.SendOrderCreatedEmail(user.Email, user.FirstName, exchange)
+	}
 
 	return exchange, nil
 }

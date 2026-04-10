@@ -12,6 +12,7 @@ import (
 type WalletService struct {
 	walletRepo *repository.WalletRepository
 	txRepo     *repository.TransactionRepository
+	cgService  *CryptoGateService // optional; nil if crypto-gate is not configured
 }
 
 func NewWalletService(
@@ -22,6 +23,10 @@ func NewWalletService(
 		walletRepo: walletRepo,
 		txRepo:     txRepo,
 	}
+}
+
+func (s *WalletService) SetCryptoGateService(cg *CryptoGateService) {
+	s.cgService = cg
 }
 
 func (s *WalletService) GetUserWallets(ctx context.Context, userID int64) ([]domain.WalletWithCurrency, error) {
@@ -35,36 +40,13 @@ func (s *WalletService) Deposit(ctx context.Context, userID int64, req *models.D
 	}
 
 	wallet, err := s.walletRepo.GetByUserAndCurrency(ctx, userID, currency.ID)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to find wallet: %w", err)
 	}
 
-	tx := &domain.Transaction{
-		UserID:   userID,
-		WalletID: wallet.ID,
-		Type:     domain.TransactionTypeDeposit,
-		Amount:   req.Amount,
-		Fee:      0,
-		Status:   domain.TransactionStatusPending,
-		TxHash:   req.TxHash,
-	}
-
-	if err := s.txRepo.Create(ctx, tx); err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
-	}
-
-	newBalance := wallet.Balance + req.Amount
-	if err := s.walletRepo.UpdateBalance(ctx, wallet.ID, newBalance, wallet.Locked); err != nil {
-		return nil, fmt.Errorf("failed to update balance: %w", err)
-	}
-
-	tx.Status = domain.TransactionStatusCompleted
-	if err := s.txRepo.Update(ctx, tx); err != nil {
-		return nil, err
-	}
-
-	return tx, nil
+	// RecordDeposit wraps the transaction insert and balance credit in a single DB
+	// transaction — identical to the webhook deposit path.
+	return s.walletRepo.RecordDeposit(ctx, userID, wallet.ID, req.Amount, req.TxHash)
 }
 
 func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.WithdrawRequest) (*domain.Transaction, error) {
@@ -78,8 +60,23 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 		return nil, fmt.Errorf("wallet not found: %w", err)
 	}
 
-	if wallet.Balance < req.Amount {
-		return nil, fmt.Errorf("insufficient balance")
+	_, isCrypto := domain.CurrencyChainFor(req.CurrencyCode)
+	isCryptoOnChain := isCrypto && s.cgService != nil && req.ToAddress != ""
+
+	var fee float64
+	if !isCryptoOnChain {
+		fee = req.Amount * 0.001
+	}
+
+	// AtomicDeduct checks balance and deducts in a single SQL UPDATE … WHERE balance >= $1.
+	// No separate read-then-check needed — eliminates the double-spend race condition.
+	if err := s.walletRepo.AtomicDeduct(ctx, wallet.ID, req.Amount+fee); err != nil {
+		return nil, err // "insufficient balance" returned by the repo on failure
+	}
+
+	status := domain.TransactionStatusCompleted
+	if isCryptoOnChain {
+		status = domain.TransactionStatusPending
 	}
 
 	tx := &domain.Transaction{
@@ -87,17 +84,23 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 		WalletID: wallet.ID,
 		Type:     domain.TransactionTypeWithdrawal,
 		Amount:   req.Amount,
-		Fee:      req.Amount * 0.001,
-		Status:   domain.TransactionStatusPending,
+		Fee:      fee,
+		Status:   status,
 	}
 
 	if err := s.txRepo.Create(ctx, tx); err != nil {
+		// Balance already deducted — refund before surfacing the error.
+		if cErr := s.walletRepo.AtomicCredit(ctx, wallet.ID, req.Amount+fee); cErr != nil {
+			return nil, fmt.Errorf("failed to create transaction (%w) and refund also failed (%v) — MANUAL INTERVENTION REQUIRED", err, cErr)
+		}
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
 
-	newBalance := wallet.Balance - req.Amount - tx.Fee
-	if err := s.walletRepo.UpdateBalance(ctx, wallet.ID, newBalance, wallet.Locked); err != nil {
-		return nil, fmt.Errorf("failed to update balance: %w", err)
+	if isCryptoOnChain {
+		if err := s.cgService.InitiateWithdrawal(ctx, tx, req.ToAddress, req.CurrencyCode); err != nil {
+			return nil, err
+		}
+		return tx, nil
 	}
 
 	tx.Status = domain.TransactionStatusCompleted

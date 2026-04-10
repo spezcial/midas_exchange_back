@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,7 +134,12 @@ func (s *OAuthService) HandleGoogleCallback(ctx context.Context, req *models.Goo
 	}
 
 	// Check if email already exists with regular auth
-	existingUser, _ := s.userRepo.GetByEmail(ctx, userInfo.Email)
+	existingUser, err := s.userRepo.GetByEmail(ctx, userInfo.Email)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.logger.Error("Failed to get existing user", "error", err)
+		return nil, fmt.Errorf("database error")
+	}
+
 	if existingUser != nil {
 		return nil, fmt.Errorf("email already registered. Please login with password")
 	}

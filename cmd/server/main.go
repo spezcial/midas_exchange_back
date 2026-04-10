@@ -14,6 +14,7 @@ import (
 	"github.com/caspianex/exchange-backend/pkg/auth"
 	"github.com/caspianex/exchange-backend/pkg/cache"
 	"github.com/caspianex/exchange-backend/pkg/config"
+	"github.com/caspianex/exchange-backend/pkg/cryptogate"
 	"github.com/caspianex/exchange-backend/pkg/database"
 	"github.com/caspianex/exchange-backend/pkg/email"
 	"github.com/caspianex/exchange-backend/pkg/logger"
@@ -79,11 +80,31 @@ func main() {
 	txRepo := repository.NewTransactionRepository(db)
 	exchangeRateRepo := repository.NewExchangeRateRepository(db, cacheService)
 	oauthRepo := repository.NewOAuthRepository(db)
+	addrRepo := repository.NewDepositAddressRepository(db)
 
 	// Initialize services
 	authService := service.NewAuthService(userRepo, walletRepo, jwtManager, emailService, cfg.App.BcryptCost, log)
 	userService := service.NewUserService(userRepo, walletRepo, cfg.App.BcryptCost)
 	walletService := service.NewWalletService(walletRepo, txRepo)
+
+	// Wire up crypto-gate integration when configured
+	var cgService *service.CryptoGateService
+	if cfg.CryptoGate.BaseURL != "" && cfg.CryptoGate.Token != "" {
+		cgClient := cryptogate.NewClient(cfg.CryptoGate.BaseURL, cfg.CryptoGate.Token, cfg.CryptoGate.Platform)
+		cgService = service.NewCryptoGateService(cgClient, cfg.CryptoGate.Platform, addrRepo, walletRepo, txRepo, log)
+		walletService.SetCryptoGateService(cgService)
+		authService.SetCryptoGateService(cgService)
+		//pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		//if err := cgClient.Ping(pingCtx); err != nil {
+		//	log.Error("crypto-gate ping failed — check CRYPTO_GATE_URL and CRYPTO_GATE_TOKEN", "error", err)
+		//	pingCancel()
+		//	os.Exit(1)
+		//}
+		//pingCancel()
+		log.Info("Crypto-gate integration enabled", "url", cfg.CryptoGate.BaseURL)
+	} else {
+		log.Info("Crypto-gate integration disabled (CRYPTO_GATE_URL/TOKEN not set)")
+	}
 	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService)
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)
 	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
@@ -116,6 +137,7 @@ func main() {
 		exchangeRatesService,
 		oauthService,
 		otcService,
+		cgService,
 		rateUpdater,
 	)
 

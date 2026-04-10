@@ -7,10 +7,12 @@ const (
 		RETURNING id, created_at, updated_at
 `
 
-	TransactionGetByIDQuery = `SELECT * FROM transactions WHERE id = $1`
+	transactionColumns = `id, user_id, wallet_id, type, amount, fee, status, tx_hash, created_at, updated_at`
+
+	TransactionGetByIDQuery = `SELECT ` + transactionColumns + ` FROM transactions WHERE id = $1`
 
 	TransactionGetUserTransactionsQuery = `
-		SELECT * FROM transactions
+		SELECT ` + transactionColumns + ` FROM transactions
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
@@ -24,14 +26,16 @@ const (
 `
 
 	TransactionGetPendingQuery = `
-		SELECT * FROM transactions
+		SELECT ` + transactionColumns + ` FROM transactions
 		WHERE status = 'pending'
 		ORDER BY created_at ASC
 `
 
 	TransactionGetAllQuery = `
-		SELECT * FROM transactions
+		SELECT ` + transactionColumns + ` FROM transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 `
+
+	TransactionExistsByTxHashQuery = `SELECT EXISTS(SELECT 1 FROM transactions WHERE tx_hash = $1 AND tx_hash != '')`
 )

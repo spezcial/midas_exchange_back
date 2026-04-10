@@ -2,8 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
-	"github.com/caspianex/exchange-backend/pkg/logger"
 	"time"
 
 	"github.com/caspianex/exchange-backend/internal/domain"
@@ -11,6 +12,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 	"github.com/caspianex/exchange-backend/pkg/auth"
 	"github.com/caspianex/exchange-backend/pkg/email"
+	"github.com/caspianex/exchange-backend/pkg/logger"
 )
 
 type AuthService struct {
@@ -20,6 +22,7 @@ type AuthService struct {
 	emailService *email.EmailService
 	bcryptCost   int
 	logger       *logger.Logger
+	cgService    *CryptoGateService // optional; nil if not configured
 }
 
 func NewAuthService(
@@ -40,8 +43,15 @@ func NewAuthService(
 	}
 }
 
+func (s *AuthService) SetCryptoGateService(cg *CryptoGateService) {
+	s.cgService = cg
+}
+
 func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest) (*models.AuthResponse, error) {
-	existing, _ := s.userRepo.GetByEmail(ctx, req.Email)
+	existing, err := s.userRepo.GetByEmail(ctx, req.Email)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed to check email: %w", err)
+	}
 	if existing != nil {
 		return nil, fmt.Errorf("email already registered")
 	}
@@ -74,8 +84,30 @@ func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest)
 				Balance:    0,
 				Locked:     0,
 			}
-			s.walletRepo.Create(ctx, wallet)
+			if err := s.walletRepo.Create(ctx, wallet); err != nil {
+				s.logger.Error("failed to create wallet during registration", "user_id", user.ID, "currency_id", currency.ID, "error", err)
+			}
 		}
+	}
+
+	// Create blockchain deposit addresses for all supported crypto currencies.
+	// Fire-and-forget: registration succeeds even if crypto-gate is temporarily down.
+	if s.cgService != nil {
+		userID := user.ID
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			for code, chain := range domain.CryptoGateCurrencies {
+				currency, err := s.walletRepo.GetCurrencyByCode(bgCtx, code)
+				if err != nil {
+					continue // currency not in DB (e.g. not seeded yet)
+				}
+				if _, err := s.cgService.GetOrCreateDepositAddress(bgCtx, userID, code, int64(currency.ID)); err != nil {
+					s.logger.Warn("failed to create deposit address at registration",
+						"user_id", userID, "currency", code, "chain", chain.Chain, "error", err)
+				}
+			}
+		}()
 	}
 
 	go func() {

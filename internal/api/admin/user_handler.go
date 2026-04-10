@@ -86,28 +86,6 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, profile)
 }
 
-func (h *UserHandler) SetProfile(w http.ResponseWriter, r *http.Request) {
-	userIDStr := chi.URLParam(r, "id")
-	userID, err := strconv.ParseInt(userIDStr, 10, 64)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid user ID")
-		return
-	}
-
-	var req updateProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-
-	profile, err := h.userService.UpdateProfile(r.Context(), userID, req.FirstName, req.LastName, req.MiddleName, req.Phone, req.KycLevel)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusOK, profile)
-}
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userIDStr := chi.URLParam(r, "id")

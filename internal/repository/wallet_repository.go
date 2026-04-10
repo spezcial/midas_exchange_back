@@ -198,6 +198,56 @@ func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int6
 	return nil
 }
 
+// AtomicCredit increments wallet balance by amount using a single SQL UPDATE.
+// Never use UpdateBalance for deposits — it reads first, then writes (race condition).
+func (r *WalletRepository) AtomicCredit(ctx context.Context, walletID int64, amount float64) error {
+	var updatedAt time.Time
+	err := r.db.QueryRowContext(ctx, queries.WalletAddBalanceQuery, amount, walletID).Scan(&updatedAt)
+	if err != nil {
+		return err
+	}
+	_ = r.RefreshWalletCache(ctx, walletID)
+	return nil
+}
+
+// RecordDeposit atomically creates a completed deposit transaction record and credits
+// the wallet in a single DB transaction. A crash between the two writes is impossible.
+func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID int64, amount float64, txHash string) (*domain.Transaction, error) {
+	dbTx, err := r.db.BeginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer dbTx.Rollback()
+
+	tx := &domain.Transaction{
+		UserID:   userID,
+		WalletID: walletID,
+		Type:     domain.TransactionTypeDeposit,
+		Amount:   amount,
+		Fee:      0,
+		Status:   domain.TransactionStatusCompleted,
+		TxHash:   txHash,
+	}
+	err = dbTx.QueryRowContext(ctx, queries.TransactionCreateQuery,
+		tx.UserID, tx.WalletID, tx.Type, tx.Amount, tx.Fee, tx.Status, tx.TxHash,
+	).Scan(&tx.ID, &tx.CreatedAt, &tx.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("create deposit transaction: %w", err)
+	}
+
+	var updatedAt time.Time
+	if err = dbTx.QueryRowContext(ctx, queries.WalletAddBalanceQuery, amount, walletID).Scan(&updatedAt); err != nil {
+		return nil, fmt.Errorf("credit wallet: %w", err)
+	}
+
+	if err = dbTx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit deposit: %w", err)
+	}
+
+	_ = r.RefreshWalletCache(ctx, walletID)
+	return tx, nil
+}
+
 // RefreshWalletCache reads the wallet from DB and updates the in-memory cache.
 // Call this after operations that write to the wallet outside the normal repo methods
 // (e.g., after CompleteOrderAtomic).

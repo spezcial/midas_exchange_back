@@ -285,7 +285,8 @@ func (h *AdminOTCHandler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.otcService.AcceptOffer(r.Context(), uid, messageID, acceptorID); err != nil {
+	acceptorRole, _ := middleware.GetUserRole(r.Context())
+	if err := h.otcService.AcceptOffer(r.Context(), uid, messageID, acceptorID, acceptorRole); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/caspianex/exchange-backend/const/queries"
@@ -74,8 +75,8 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.
 	// Cache miss - fetch from DB
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, queries.UserGetByEmailQuery, email)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("user not found")
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, sql.ErrNoRows
 	}
 	if err != nil {
 		return nil, err

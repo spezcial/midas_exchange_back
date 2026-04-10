@@ -157,6 +157,17 @@ func (s *OTCService) GetConfigs(ctx context.Context) ([]domain.OTCConfig, error)
 	return s.otcRepo.GetConfigs(ctx)
 }
 
+// GetOrderOwner returns the userID that owns the order without triggering any
+// side-effects (no lazy expiry, no mark-as-read). Used by client handlers to
+// verify ownership before calling GetOrder.
+func (s *OTCService) GetOrderOwner(ctx context.Context, uid string) (int64, error) {
+	order, err := s.otcRepo.GetByUID(ctx, uid)
+	if err != nil {
+		return 0, err
+	}
+	return order.UserID, nil
+}
+
 // GetOrder loads the order by UID, applies lazy expiry, computes unread message
 // count for callerID, and marks those messages as read.
 func (s *OTCService) GetOrder(ctx context.Context, uid string, callerID int64) (*domain.OTCOrderDetail, error) {
@@ -358,7 +369,7 @@ func (s *OTCService) SendOffer(ctx context.Context, uid string, senderID int64, 
 	return msg, nil
 }
 
-func (s *OTCService) AcceptOffer(ctx context.Context, uid string, messageID, acceptorID int64) error {
+func (s *OTCService) AcceptOffer(ctx context.Context, uid string, messageID, acceptorID int64, acceptorRole string) error {
 	order, err := s.otcRepo.GetByUID(ctx, uid)
 	if err != nil {
 		return err
@@ -392,7 +403,7 @@ func (s *OTCService) AcceptOffer(ctx context.Context, uid string, messageID, acc
 	if err := s.otcRepo.Agree(ctx, order.ID, *msg.OfferRate, *msg.OfferFromAmount, *msg.OfferToAmount, deadline); err != nil {
 		return err
 	}
-	s.logAudit(order.ID, acceptorID, msg.SenderRole, domain.OTCAuditActionAcceptedOffer,
+	s.logAudit(order.ID, acceptorID, acceptorRole, domain.OTCAuditActionAcceptedOffer,
 		map[string]interface{}{"message_id": messageID})
 	return nil
 }
@@ -479,8 +490,8 @@ func (s *OTCService) ConfirmPaymentReceived(ctx context.Context, uid string, ope
 	if err != nil {
 		return err
 	}
-	if order.Status != domain.OTCStatusAwaitingPayment && order.Status != domain.OTCStatusExpired {
-		return fmt.Errorf("order must be in awaiting_payment or expired status")
+	if order.Status != domain.OTCStatusAwaitingPayment {
+		return fmt.Errorf("order must be in awaiting_payment status to confirm payment")
 	}
 	if order.OperatorID == nil || *order.OperatorID != operatorID {
 		return fmt.Errorf("only the assigned operator can confirm payment")

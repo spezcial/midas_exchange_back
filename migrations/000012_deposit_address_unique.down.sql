@@ -1,0 +1,1 @@
+ALTER TABLE crypto_deposit_addresses DROP CONSTRAINT crypto_deposit_addresses_address_key;

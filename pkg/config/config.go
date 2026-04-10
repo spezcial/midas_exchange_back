@@ -9,16 +9,24 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig
-	Database  DatabaseConfig
-	WebSocket WebSocketConfig
-	Redis     RedisConfig
-	JWT       JWTConfig
-	Email     EmailConfig
-	App       AppConfig
-	Payment   PaymentConfig
-	Worker    WorkerConfig
-	OAuth     OAuthConfig
+	Server      ServerConfig
+	Database    DatabaseConfig
+	WebSocket   WebSocketConfig
+	Redis       RedisConfig
+	JWT         JWTConfig
+	Email       EmailConfig
+	App         AppConfig
+	Payment     PaymentConfig
+	Worker      WorkerConfig
+	OAuth       OAuthConfig
+	CryptoGate  CryptoGateConfig
+}
+
+type CryptoGateConfig struct {
+	BaseURL       string
+	Token         string
+	WebhookSecret string
+	Platform      string // platform slug assigned during gateway registration
 }
 
 type ServerConfig struct {
@@ -178,6 +186,12 @@ func Load() (*Config, error) {
 			GoogleRedirectURI:  getEnv("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:5173/auth/google/callback"),
 			StateExpiry:        parseDuration(getEnv("GOOGLE_OAUTH_STATE_EXPIRY", "10m"), 10*time.Minute),
 		},
+		CryptoGate: CryptoGateConfig{
+			BaseURL:       getEnv("CRYPTO_GATE_URL", ""),
+			Token:         getEnv("CRYPTO_GATE_TOKEN", ""),
+			WebhookSecret: getEnv("CRYPTO_GATE_WEBHOOK_SECRET", ""),
+			Platform:      getEnv("CRYPTO_GATE_PLATFORM", ""),
+		},
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -193,6 +207,14 @@ func (c *Config) validate() error {
 	}
 	if c.Database.Password == "" {
 		return fmt.Errorf("DB_PASSWORD is required")
+	}
+	if c.CryptoGate.BaseURL != "" && c.Server.Env == "production" {
+		if c.CryptoGate.WebhookSecret == "" {
+			return fmt.Errorf("CRYPTO_GATE_WEBHOOK_SECRET is required when crypto-gate is enabled in production")
+		}
+		if c.CryptoGate.Platform == "" {
+			return fmt.Errorf("CRYPTO_GATE_PLATFORM is required when crypto-gate is enabled in production")
+		}
 	}
 	return nil
 }

@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 
 	"github.com/caspianex/exchange-backend/const/queries"
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/pkg/database"
 )
+
+var ErrTransactionNotFound = errors.New("transaction not found")
 
 type TransactionRepository struct {
 	db *database.Postgres
@@ -28,8 +30,8 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *domain.Transacti
 func (r *TransactionRepository) GetByID(ctx context.Context, id int64) (*domain.Transaction, error) {
 	var tx domain.Transaction
 	err := r.db.GetContext(ctx, &tx, queries.TransactionGetByIDQuery, id)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("transaction not found")
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTransactionNotFound
 	}
 	return &tx, err
 }
@@ -57,4 +59,12 @@ func (r *TransactionRepository) GetAllTransactions(ctx context.Context, limit, o
 	var transactions []domain.Transaction
 	err := r.db.SelectContext(ctx, &transactions, queries.TransactionGetAllQuery, limit, offset)
 	return transactions, err
+}
+
+// ExistsByTxHash returns true if a transaction with this blockchain hash already exists.
+// Used for deposit idempotency checks.
+func (r *TransactionRepository) ExistsByTxHash(ctx context.Context, txHash string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, queries.TransactionExistsByTxHashQuery, txHash).Scan(&exists)
+	return exists, err
 }

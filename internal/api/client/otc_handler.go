@@ -100,18 +100,26 @@ func (h *OTCHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid := chi.URLParam(r, "uid")
-	order, err := h.otcService.GetOrder(r.Context(), uid, userID)
+
+	// Peek at the order owner before triggering side-effects (lazy expiry, mark-read).
+	// Without this check a client could enumerate UIDs to expire other users' orders.
+	order, err := h.otcService.GetOrderOwner(r.Context(), uid)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if order != userID {
+		respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	detail, err := h.otcService.GetOrder(r.Context(), uid, userID)
 	if err != nil {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	if order.UserID != userID {
-		respondError(w, http.StatusForbidden, "access denied")
-		return
-	}
-
-	respondJSON(w, http.StatusOK, order)
+	respondJSON(w, http.StatusOK, detail)
 }
 
 type sendMessageRequest struct {
@@ -200,7 +208,7 @@ func (h *OTCHandler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.otcService.AcceptOffer(r.Context(), uid, messageID, userID); err != nil {
+	if err := h.otcService.AcceptOffer(r.Context(), uid, messageID, userID, "client"); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
