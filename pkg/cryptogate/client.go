@@ -59,8 +59,6 @@ func (c *Client) GetDepositAddress(ctx context.Context, chain string) (string, e
 	u := fmt.Sprintf("%s/wallet?chain=%s&platform=%s", c.baseURL,
 		url.QueryEscape(chain), url.QueryEscape(c.platform))
 
-	fmt.Println("here", c.token, c.platform)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err

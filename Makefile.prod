@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-clear-users db-list-users backfill-deposit-addresses status ps admin-promote docker-prune
+.PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-exec db-deactivate-unsupported-currencies db-clear-users db-list-users status ps admin-promote docker-prune
 
 COMPOSE := docker compose -f docker-compose.prod.yml
 
@@ -55,6 +55,13 @@ db-migrate: ## Run database migrations
 db-shell: ## Open PostgreSQL shell
 	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db}
 
+db-exec: ## Run a SQL query — usage: make db-exec SQL="SELECT * FROM users LIMIT 5"
+	@if [ -z "$(SQL)" ]; then \
+		echo "$(YELLOW)Usage: make db-exec SQL=\"SELECT * FROM users LIMIT 5\"$(NC)"; \
+		exit 1; \
+	fi
+	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db} -c "$(SQL)"
+
 db-reset: ## Reset database — WARNING: deletes ALL data
 	@echo "$(RED)⚠️  WARNING: This will delete ALL production data.$(NC)"
 	@echo "$(YELLOW)You have 5 seconds to cancel (Ctrl+C)...$(NC)"
@@ -66,18 +73,17 @@ db-reset: ## Reset database — WARNING: deletes ALL data
 	$(COMPOSE) up migrate
 	@echo "$(GREEN)✓ Database reset complete$(NC)"
 
-# ── Backfill ──────────────────────────────────────────────────────────────────
-
-backfill-deposit-addresses: ## Create missing crypto deposit addresses for all existing users
-	@echo "$(CYAN)Backfilling deposit addresses...$(NC)"
-	$(COMPOSE) run --rm app ./backfill_deposit_addresses
-	@echo "$(GREEN)✓ Done$(NC)"
-
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
 db-list-users: ## List latest 50 client users
 	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db} \
 		-c "SELECT id, email, first_name, last_name, is_active, created_at FROM users WHERE role = 'client' ORDER BY created_at DESC LIMIT 50;"
+
+db-deactivate-unsupported-currencies: ## Deactivate currencies not supported by crypto-gate (SOL, XRP, ADA, DOGE)
+	@echo "$(YELLOW)Deactivating unsupported currencies: SOL, XRP, ADA, DOGE$(NC)"
+	$(COMPOSE) exec postgres psql -U $${DB_USER:-exchange} -d $${DB_NAME:-exchange_db} -c \
+		"UPDATE currencies SET is_active = false WHERE code IN ('SOL', 'XRP', 'ADA', 'DOGE');"
+	@echo "$(GREEN)✓ Done$(NC)"
 
 db-clear-users: ## ⚠️  Delete ALL client users and their data
 	@echo "$(RED)⚠️  WARNING: This will permanently delete ALL client users in production.$(NC)"
