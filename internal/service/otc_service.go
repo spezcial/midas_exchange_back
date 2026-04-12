@@ -311,13 +311,35 @@ func (s *OTCService) TakeOrder(ctx context.Context, uid string, operatorID int64
 	return nil
 }
 
+func (s *OTCService) AcceptAsProposed(ctx context.Context, uid string, operatorID int64, operatorRole string) error {
+	order, err := s.otcRepo.GetByUID(ctx, uid)
+	if err != nil {
+		return err
+	}
+	if order.Status != domain.OTCStatusNegotiating {
+		return fmt.Errorf("order must be negotiating to accept the proposed rate")
+	}
+	if order.OperatorID == nil || *order.OperatorID != operatorID {
+		return fmt.Errorf("only the assigned operator can accept the proposed rate")
+	}
+
+	toAmount := order.FromAmount * order.ProposedRate
+	deadline := time.Now().Add(30 * time.Minute)
+	if err := s.otcRepo.Agree(ctx, order.ID, order.ProposedRate, order.FromAmount, toAmount, deadline); err != nil {
+		return err
+	}
+	s.logAudit(order.ID, operatorID, operatorRole, domain.OTCAuditActionAcceptedOffer,
+		map[string]interface{}{"source": "proposed_rate", "rate": order.ProposedRate})
+	return nil
+}
+
 func (s *OTCService) SendMessage(ctx context.Context, uid string, senderID int64, senderRole, content string) (*domain.OTCMessage, error) {
 	order, err := s.otcRepo.GetByUID(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
-	if order.Status != domain.OTCStatusNegotiating {
-		return nil, fmt.Errorf("messages can only be sent while order is negotiating")
+	if order.Status != domain.OTCStatusNegotiating && order.Status != domain.OTCStatusAwaitingPayment {
+		return nil, fmt.Errorf("messages can only be sent while order is negotiating or awaiting payment")
 	}
 	if !s.isOrderParticipant(order, senderID) {
 		return nil, fmt.Errorf("not authorized to message on this order")

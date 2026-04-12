@@ -198,6 +198,7 @@ func apiV1(
 			r.Get("/orders/{uid}", otcAdminHandler.GetOrder)
 			r.Get("/orders/{uid}/audit-log", otcAdminHandler.GetAuditLog)
 			r.Put("/orders/{uid}/take", otcAdminHandler.TakeOrder)
+			r.Put("/orders/{uid}/accept-proposed", otcAdminHandler.AcceptAsProposed)
 			r.Post("/orders/{uid}/messages", otcAdminHandler.SendMessage)
 			r.Post("/orders/{uid}/offers", otcAdminHandler.SendOffer)
 			r.Put("/orders/{uid}/offers/{id}/accept", otcAdminHandler.AcceptOffer)

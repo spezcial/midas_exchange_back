@@ -197,6 +197,22 @@ func (h *AdminOTCHandler) TakeOrder(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"message": "order taken"})
 }
 
+func (h *AdminOTCHandler) AcceptAsProposed(w http.ResponseWriter, r *http.Request) {
+	operatorID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	operatorRole, _ := middleware.GetUserRole(r.Context())
+
+	uid := chi.URLParam(r, "uid")
+	if err := h.otcService.AcceptAsProposed(r.Context(), uid, operatorID, operatorRole); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"message": "proposed rate accepted"})
+}
+
 type adminSendMessageRequest struct {
 	Content string `json:"content"`
 }
