@@ -32,11 +32,14 @@ const (
 		SELECT
 			o.id, o.uid, o.user_id, o.operator_id,
 			o.from_currency_id, o.to_currency_id,
+			fc.code AS from_currency_code, tc.code AS to_currency_code,
 			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
 			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline,
 			o.created_at, o.updated_at,
 			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role != 'client' AND m.is_read = false) AS unread_count
 		FROM otc_orders o
+		JOIN currencies fc ON fc.id = o.from_currency_id
+		JOIN currencies tc ON tc.id = o.to_currency_id
 		WHERE o.user_id = $1
 `
 

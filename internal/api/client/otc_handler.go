@@ -213,6 +213,9 @@ func (h *OTCHandler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "offer accepted"})
 }
 
@@ -236,6 +239,9 @@ func (h *OTCHandler) RejectOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "offer rejected"})
 }
 
@@ -263,5 +269,8 @@ func (h *OTCHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "order cancelled"})
 }

@@ -188,15 +188,20 @@ func (r *OTCRepository) ListByUser(ctx context.Context, userID int64, limit, off
 func (r *OTCRepository) ListAll(ctx context.Context, limit, offset int, filter domain.OTCListFilter) ([]domain.OTCOrder, int64, error) {
 	needsUserJoin := filter.Email != ""
 
+	currencyJoins := " JOIN currencies fc ON fc.id = o.from_currency_id JOIN currencies tc ON tc.id = o.to_currency_id"
 	var fromClause string
 	if needsUserJoin {
-		fromClause = "FROM otc_orders o JOIN users u ON o.user_id = u.id"
+		fromClause = "FROM otc_orders o JOIN users u ON o.user_id = u.id" + currencyJoins
 	} else {
-		fromClause = "FROM otc_orders o"
+		fromClause = "FROM otc_orders o" + currencyJoins
 	}
 
-	countBase := "SELECT COUNT(*) " + fromClause
+	countBase := "SELECT COUNT(*) FROM otc_orders o"
+	if needsUserJoin {
+		countBase = "SELECT COUNT(*) FROM otc_orders o JOIN users u ON o.user_id = u.id"
+	}
 	listBase := `SELECT o.id, o.uid, o.user_id, o.operator_id, o.from_currency_id, o.to_currency_id,
+		fc.code AS from_currency_code, tc.code AS to_currency_code,
 		o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
 		o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline, o.created_at, o.updated_at,
 		(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count ` +

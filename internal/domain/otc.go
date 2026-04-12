@@ -47,6 +47,8 @@ type OTCOrder struct {
 	OperatorID       *int64     `db:"operator_id" json:"operator_id"`
 	FromCurrencyID   int64      `db:"from_currency_id" json:"from_currency_id"`
 	ToCurrencyID     int64      `db:"to_currency_id" json:"to_currency_id"`
+	FromCurrencyCode string     `db:"from_currency_code" json:"from_currency_code"`
+	ToCurrencyCode   string     `db:"to_currency_code" json:"to_currency_code"`
 	FromAmount       float64    `db:"from_amount" json:"from_amount"`
 	ProposedRate     float64    `db:"proposed_rate" json:"proposed_rate"`
 	AgreedRate       *float64   `db:"agreed_rate" json:"agreed_rate"`

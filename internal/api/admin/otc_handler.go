@@ -194,6 +194,9 @@ func (h *AdminOTCHandler) TakeOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "order taken"})
 }
 
@@ -209,6 +212,9 @@ func (h *AdminOTCHandler) AcceptAsProposed(w http.ResponseWriter, r *http.Reques
 	if err := h.otcService.AcceptAsProposed(r.Context(), uid, operatorID, operatorRole); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
 	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "proposed rate accepted"})
 }
@@ -307,6 +313,9 @@ func (h *AdminOTCHandler) AcceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "offer accepted"})
 }
 
@@ -330,6 +339,9 @@ func (h *AdminOTCHandler) RejectOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "offer rejected"})
 }
 
@@ -346,6 +358,9 @@ func (h *AdminOTCHandler) ConfirmPaymentReceived(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "payment received confirmed"})
 }
 
@@ -362,6 +377,9 @@ func (h *AdminOTCHandler) CompleteOrder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "order completed"})
 }
 
@@ -390,6 +408,9 @@ func (h *AdminOTCHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(uid, map[string]string{"type": "order_update"})
+	}
 	respondJSON(w, http.StatusOK, map[string]string{"message": "order cancelled"})
 }
 
