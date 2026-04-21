@@ -44,7 +44,7 @@ func (ws *WebSocketService) handler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		ws.logger.Error("upgrader.Upgrade:", err.Error())
+		ws.logger.Error("upgrader.Upgrade failed", "error", err.Error())
 		http.Error(w, "Could not upgrade to WebSocket", http.StatusInternalServerError)
 		cancel()
 		return
@@ -56,18 +56,18 @@ func (ws *WebSocketService) handler(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			ws.logger.Error("Error reading from websocket", err)
+			ws.logger.Error("Error reading from websocket", "error", err.Error())
 			break
 		}
 
 		response, err := ws.processMessage(ctx, message)
 		if err != nil {
-			ws.logger.Error("Socket error", err)
+			ws.logger.Error("Socket error", "error", err.Error())
 			continue
 		}
 
 		if err := conn.WriteMessage(websocket.TextMessage, response); err != nil {
-			ws.logger.Error("Error writing to websocket", err)
+			ws.logger.Error("Error writing to websocket", "error", err.Error())
 			break
 		}
 	}
@@ -80,7 +80,7 @@ func (ws *WebSocketService) processMessage(ctx context.Context, message []byte) 
 		return []byte{}, err
 	}
 
-	ws.logger.Info("Received message from websocket. Action: ", request.Action)
+	ws.logger.Info("Received message from websocket", "action", request.Action)
 
 	switch request.Action {
 	case "ping":

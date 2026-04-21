@@ -27,6 +27,7 @@ type mockOTCRepo struct {
 	completeAtomicCalled      bool
 	completeAtomicErr         error
 	updateOfferStatCalled     bool
+	updateOfferStatErr        error
 	expireCalled              bool
 	expireResult              bool
 	markMessagesReadCalled    bool
@@ -74,6 +75,9 @@ func (m *mockOTCRepo) GetMessageByID(_ context.Context, _ int64) (*domain.OTCMes
 }
 func (m *mockOTCRepo) UpdateOfferStatus(_ context.Context, _ int64, _ domain.OTCOfferStatus) error {
 	m.updateOfferStatCalled = true
+	if m.updateOfferStatErr != nil {
+		return m.updateOfferStatErr
+	}
 	return m.msgErr
 }
 func (m *mockOTCRepo) Agree(_ context.Context, _ int64, _, _, _ float64, _ time.Time) error {
@@ -610,6 +614,101 @@ func TestAcceptOffer_AlreadyNotPending(t *testing.T) {
 	}
 }
 
+func makeOffer(orderID, senderID int64) *domain.OTCMessage {
+	status := domain.OTCOfferStatusPending
+	rate := 0.05
+	from := 1000.0
+	to := 50.0
+	return &domain.OTCMessage{
+		ID:              1,
+		OrderID:         orderID,
+		SenderID:        senderID,
+		SenderRole:      "operator",
+		MessageType:     domain.OTCMessageTypeOffer,
+		OfferRate:       &rate,
+		OfferFromAmount: &from,
+		OfferToAmount:   &to,
+		OfferStatus:     &status,
+	}
+}
+
+func TestAcceptOffer_HappyPath(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
+	msg := makeOffer(1, 5) // operator sent the offer
+	otcRepo := &mockOTCRepo{order: order, message: msg}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 10, "client") // client accepts
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !otcRepo.updateOfferStatCalled {
+		t.Error("expected UpdateOfferStatus to be called")
+	}
+	if !otcRepo.agreeCalled {
+		t.Error("expected Agree to be called")
+	}
+}
+
+func TestAcceptOffer_WrongStatus(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, Status: domain.OTCStatusAwaitingPayment}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 10, "client")
+	if err == nil || err.Error() != "order must be negotiating to accept an offer" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAcceptOffer_MessageNotFound(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, Status: domain.OTCStatusNegotiating}}
+	otcRepo := &mockOTCRepo{order: order, msgErr: errors.New("not found")}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 99, 10, "client")
+	if err == nil {
+		t.Error("expected error when message not found")
+	}
+}
+
+func TestAcceptOffer_MessageBelongsToDifferentOrder(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, Status: domain.OTCStatusNegotiating}}
+	msg := makeOffer(999, 5) // belongs to a different order
+	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 10, "client")
+	if err == nil || err.Error() != "message does not belong to this order" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAcceptOffer_MessageNotAnOffer(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, Status: domain.OTCStatusNegotiating}}
+	msg := makeOffer(1, 5)
+	msg.MessageType = domain.OTCMessageTypeText
+	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 10, "client")
+	if err == nil || err.Error() != "message is not an offer" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAcceptOffer_UpdateOfferStatusFails(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
+	msg := makeOffer(1, 5)
+	otcRepo := &mockOTCRepo{order: order, message: msg, updateOfferStatErr: errors.New("db error")}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.AcceptOffer(context.Background(), "abc", 1, 10, "client")
+	if err == nil {
+		t.Error("expected error when UpdateOfferStatus fails")
+	}
+	if otcRepo.agreeCalled {
+		t.Error("Agree must not be called when UpdateOfferStatus fails")
+	}
+}
+
 // ---------- CancelOrder tests ----------
 
 func TestCancelOrder_ClientCannotCancelOtherOrder(t *testing.T) {
@@ -697,5 +796,438 @@ func TestConfirmPaymentReceived_WrongStatus(t *testing.T) {
 	err := svc.ConfirmPaymentReceived(context.Background(), "abc", 5)
 	if err == nil {
 		t.Error("expected error for wrong status")
+	}
+}
+
+// ---------- AcceptAsProposed tests ----------
+
+func TestAcceptAsProposed_Success(t *testing.T) {
+	operatorID := int64(7)
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:           1,
+		OperatorID:   ptr(operatorID),
+		Status:       domain.OTCStatusNegotiating,
+		FromAmount:   1000.0,
+		ProposedRate: 0.05,
+	}}
+	otcRepo := &mockOTCRepo{order: order}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	if err := svc.AcceptAsProposed(context.Background(), "abc", operatorID, "operator"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !otcRepo.agreeCalled {
+		t.Error("expected Agree to be called")
+	}
+}
+
+func TestAcceptAsProposed_WrongStatus(t *testing.T) {
+	operatorID := int64(7)
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:         1,
+		OperatorID: ptr(operatorID),
+		Status:     domain.OTCStatusAwaitingReview,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	err := svc.AcceptAsProposed(context.Background(), "abc", operatorID, "operator")
+	if err == nil || err.Error() != "order must be negotiating to accept the proposed rate" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAcceptAsProposed_WrongOperator(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:         1,
+		OperatorID: ptr(int64(7)),
+		Status:     domain.OTCStatusNegotiating,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	err := svc.AcceptAsProposed(context.Background(), "abc", 99, "operator")
+	if err == nil || err.Error() != "only the assigned operator can accept the proposed rate" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAcceptAsProposed_NilOperator(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:         1,
+		OperatorID: nil,
+		Status:     domain.OTCStatusNegotiating,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	err := svc.AcceptAsProposed(context.Background(), "abc", 7, "operator")
+	if err == nil {
+		t.Error("expected error when order has no assigned operator")
+	}
+}
+
+// ---------- SendMessage tests ----------
+
+func TestSendMessage_Success_Negotiating(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusNegotiating,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	msg, err := svc.SendMessage(context.Background(), "abc", 10, "client", "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg == nil || msg.Content == nil || *msg.Content != "hello" {
+		t.Error("expected message with correct content")
+	}
+}
+
+func TestSendMessage_Success_AwaitingPayment(t *testing.T) {
+	operatorID := int64(5)
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:         1,
+		UserID:     10,
+		OperatorID: ptr(operatorID),
+		Status:     domain.OTCStatusAwaitingPayment,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	msg, err := svc.SendMessage(context.Background(), "abc", operatorID, "operator", "payment details")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg == nil {
+		t.Error("expected message to be returned")
+	}
+}
+
+func TestSendMessage_WrongStatus(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusAwaitingReview,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.SendMessage(context.Background(), "abc", 10, "client", "hi")
+	if err == nil || err.Error() != "messages can only be sent while order is negotiating or awaiting payment" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendMessage_NotParticipant(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusNegotiating,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.SendMessage(context.Background(), "abc", 99, "client", "hi")
+	if err == nil || err.Error() != "not authorized to message on this order" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ---------- SendOffer tests ----------
+
+func TestSendOffer_Success(t *testing.T) {
+	operatorID := int64(5)
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:         1,
+		UserID:     10,
+		OperatorID: ptr(operatorID),
+		Status:     domain.OTCStatusNegotiating,
+	}}
+	otcRepo := &mockOTCRepo{order: order}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+	msg, err := svc.SendOffer(context.Background(), "abc", operatorID, "operator", 0.05, 1000.0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg == nil || msg.OfferRate == nil || *msg.OfferRate != 0.05 {
+		t.Error("expected offer message with correct rate")
+	}
+	if msg.OfferToAmount == nil || *msg.OfferToAmount != 50.0 {
+		t.Errorf("expected to_amount=50, got %v", msg.OfferToAmount)
+	}
+}
+
+func TestSendOffer_WrongStatus(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusAwaitingPayment,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.SendOffer(context.Background(), "abc", 10, "client", 0.05, 1000.0)
+	if err == nil || err.Error() != "offers can only be sent while order is negotiating" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSendOffer_NotParticipant(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusNegotiating,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.SendOffer(context.Background(), "abc", 99, "client", 0.05, 1000.0)
+	if err == nil || err.Error() != "not authorized to send offers on this order" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ---------- RejectOffer tests ----------
+
+func TestRejectOffer_Success(t *testing.T) {
+	offerStatus := domain.OTCOfferStatusPending
+	msg := &domain.OTCMessage{
+		ID:          1,
+		OrderID:     1,
+		SenderID:    5, // operator sent the offer
+		SenderRole:  "operator",
+		MessageType: domain.OTCMessageTypeOffer,
+		OfferStatus: &offerStatus,
+	}
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
+	otcRepo := &mockOTCRepo{order: order, message: msg}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10) // client rejects operator offer
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !otcRepo.updateOfferStatCalled {
+		t.Error("expected UpdateOfferStatus to be called")
+	}
+}
+
+func TestRejectOffer_CannotRejectOwnOffer(t *testing.T) {
+	offerStatus := domain.OTCOfferStatusPending
+	msg := &domain.OTCMessage{
+		ID:          1,
+		OrderID:     1,
+		SenderID:    10,
+		MessageType: domain.OTCMessageTypeOffer,
+		OfferStatus: &offerStatus,
+	}
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
+	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	if err == nil || err.Error() != "cannot reject your own offer" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRejectOffer_NotPending(t *testing.T) {
+	accepted := domain.OTCOfferStatusAccepted
+	msg := &domain.OTCMessage{
+		ID:          1,
+		OrderID:     1,
+		SenderID:    5,
+		MessageType: domain.OTCMessageTypeOffer,
+		OfferStatus: &accepted,
+	}
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
+	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	if err == nil || err.Error() != "offer is no longer pending" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRejectOffer_WrongStatus(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusAwaitingPayment}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	if err == nil || err.Error() != "order must be negotiating to reject an offer" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ---------- GetOrder (lazy expiry) tests ----------
+
+func TestGetOrder_LazyExpiry_UnlocksWallet(t *testing.T) {
+	deadline := time.Now().Add(-1 * time.Minute) // already past
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{
+			ID:             1,
+			UserID:         10,
+			Status:         domain.OTCStatusAwaitingPayment,
+			FromCurrencyID: 1,
+			FromAmount:     500.0,
+			PaymentDeadline: &deadline,
+		},
+	}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: 0, Locked: 500.0})
+
+	otcRepo := &mockOTCRepo{order: order, expireResult: true}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
+
+	result, err := svc.GetOrder(context.Background(), "abc", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.OTCStatusExpired {
+		t.Errorf("expected expired status, got %v", result.Status)
+	}
+	if !otcRepo.expireCalled {
+		t.Error("expected Expire to be called")
+	}
+	if len(wallets.unlockCalls) != 1 || wallets.unlockCalls[0].amount != 500.0 {
+		t.Errorf("expected wallet unlock of 500, got %+v", wallets.unlockCalls)
+	}
+}
+
+func TestGetOrder_LazyExpiry_AlreadyExpiredByOther(t *testing.T) {
+	// Expire returns false — another caller already expired it
+	deadline := time.Now().Add(-1 * time.Minute)
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{
+			ID:              1,
+			UserID:          10,
+			Status:          domain.OTCStatusAwaitingPayment,
+			FromCurrencyID:  1,
+			FromAmount:      500.0,
+			PaymentDeadline: &deadline,
+		},
+	}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: 0, Locked: 0})
+
+	otcRepo := &mockOTCRepo{order: order, expireResult: false}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
+
+	result, err := svc.GetOrder(context.Background(), "abc", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.OTCStatusExpired {
+		t.Errorf("expected expired status, got %v", result.Status)
+	}
+	if len(wallets.unlockCalls) != 0 {
+		t.Error("expected no unlock when another caller already expired")
+	}
+}
+
+func TestGetOrder_NoExpiry_FutureDeadline(t *testing.T) {
+	deadline := time.Now().Add(10 * time.Minute) // still in the future
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{
+			ID:              1,
+			UserID:          10,
+			Status:          domain.OTCStatusAwaitingPayment,
+			FromCurrencyID:  1,
+			PaymentDeadline: &deadline,
+		},
+	}
+	otcRepo := &mockOTCRepo{order: order}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
+
+	result, err := svc.GetOrder(context.Background(), "abc", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.OTCStatusAwaitingPayment {
+		t.Errorf("expected awaiting_payment, got %v", result.Status)
+	}
+	if otcRepo.expireCalled {
+		t.Error("expected Expire NOT to be called for future deadline")
+	}
+}
+
+func TestGetOrder_CountsUnreadMessages(t *testing.T) {
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating},
+		Messages: []domain.OTCMessage{
+			{SenderID: 5, IsRead: false},  // unread from other party
+			{SenderID: 5, IsRead: true},   // already read from other party
+			{SenderID: 10, IsRead: false}, // from caller — don't count
+		},
+	}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+
+	result, err := svc.GetOrder(context.Background(), "abc", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.UnreadCount != 1 {
+		t.Errorf("expected unread count 1, got %d", result.UnreadCount)
+	}
+}
+
+// ---------- CancelOrder awaiting_payment tests ----------
+
+func TestCancelOrder_ClientCannotCancelAwaitingPayment(t *testing.T) {
+	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{
+		ID:     1,
+		UserID: 10,
+		Status: domain.OTCStatusAwaitingPayment,
+	}}
+	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
+	err := svc.CancelOrder(context.Background(), "abc", 10, "client", "can't pay")
+	if err == nil {
+		t.Error("expected error — client cannot cancel from awaiting_payment")
+	}
+}
+
+func TestCancelOrder_OperatorCanCancelAwaitingPayment(t *testing.T) {
+	order := &domain.OTCOrderDetail{
+		OTCOrder: domain.OTCOrder{
+			ID:             1,
+			UserID:         10,
+			FromCurrencyID: 1,
+			FromAmount:     1000.0,
+			Status:         domain.OTCStatusAwaitingPayment,
+		},
+	}
+	wallets := newMockWalletRepo()
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: 1000.0})
+
+	otcRepo := &mockOTCRepo{order: order}
+	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
+	err := svc.CancelOrder(context.Background(), "abc", 99, "operator", "client no-show")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !otcRepo.cancelCalled {
+		t.Error("expected Cancel to be called")
+	}
+}
+
+// ---------- CreateConfig tests ----------
+
+func TestCreateConfig_SameCurrencyError(t *testing.T) {
+	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.CreateConfig(context.Background(), 1, 1, 100, 30, true)
+	if err == nil || err.Error() != "from_currency_id and to_currency_id must differ" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateConfig_NegativeMinAmount(t *testing.T) {
+	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.CreateConfig(context.Background(), 1, 2, -10, 30, true)
+	if err == nil || err.Error() != "min_from_amount must be non-negative" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateConfig_ZeroTimeout(t *testing.T) {
+	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
+	_, err := svc.CreateConfig(context.Background(), 1, 2, 100, 0, true)
+	if err == nil || err.Error() != "payment_timeout_min must be positive" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateConfig_Success(t *testing.T) {
+	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
+	cfg, err := svc.CreateConfig(context.Background(), 1, 2, 500.0, 30, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil || cfg.MinFromAmount != 500.0 {
+		t.Error("expected config with min_from_amount=500")
 	}
 }
