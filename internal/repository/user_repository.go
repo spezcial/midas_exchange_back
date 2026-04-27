@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/caspianex/exchange-backend/const/queries"
 	"github.com/caspianex/exchange-backend/internal/domain"
@@ -198,8 +199,14 @@ func (r *UserRepository) GetSessionByToken(ctx context.Context, token string) (*
 		return nil, err
 	}
 
-	// Update cache
-	r.cacheService.SetSession(&session, session.ExpiresAt.Sub(session.CreatedAt))
+	// Cache with remaining TTL, not the full session duration.
+	// Using the full duration would keep an expired session alive in Redis
+	// long after the DB record has been deleted.
+	remainingTTL := time.Until(session.ExpiresAt)
+	if remainingTTL <= 0 {
+		return nil, fmt.Errorf("session not found or expired")
+	}
+	r.cacheService.SetSession(&session, remainingTTL)
 
 	return &session, nil
 }

@@ -430,7 +430,7 @@ func (s *OTCService) AcceptOffer(ctx context.Context, uid string, messageID, acc
 	return nil
 }
 
-func (s *OTCService) RejectOffer(ctx context.Context, uid string, messageID, rejectorID int64) error {
+func (s *OTCService) RejectOffer(ctx context.Context, uid string, messageID, rejectorID int64, rejectorRole string) error {
 	order, err := s.otcRepo.GetByUID(ctx, uid)
 	if err != nil {
 		return err
@@ -459,7 +459,7 @@ func (s *OTCService) RejectOffer(ctx context.Context, uid string, messageID, rej
 	if err := s.otcRepo.UpdateOfferStatus(ctx, messageID, domain.OTCOfferStatusRejected); err != nil {
 		return err
 	}
-	s.logAudit(order.ID, rejectorID, msg.SenderRole, domain.OTCAuditActionRejectedOffer,
+	s.logAudit(order.ID, rejectorID, rejectorRole, domain.OTCAuditActionRejectedOffer,
 		map[string]interface{}{"message_id": messageID})
 	return nil
 }

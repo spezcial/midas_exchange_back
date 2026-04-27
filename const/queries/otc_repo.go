@@ -45,19 +45,6 @@ const (
 
 	OTCOrderCountByUserBaseQuery = `SELECT COUNT(*) FROM otc_orders WHERE user_id = $1`
 
-	OTCOrderListAllBaseQuery = `
-		SELECT
-			o.id, o.uid, o.user_id, o.operator_id,
-			o.from_currency_id, o.to_currency_id,
-			o.from_amount, o.proposed_rate, o.agreed_rate, o.agreed_from_amount, o.to_amount,
-			o.status, o.comment, o.cancel_reason, o.cancelled_by, o.payment_deadline,
-			o.created_at, o.updated_at,
-			(SELECT COUNT(*) FROM otc_messages m WHERE m.order_id = o.id AND m.sender_role = 'client' AND m.is_read = false) AS unread_count
-		FROM otc_orders o
-`
-
-	OTCOrderCountAllBaseQuery = `SELECT COUNT(*) FROM otc_orders`
-
 	OTCOrderTakeQuery = `
 		UPDATE otc_orders
 		SET operator_id = $1, status = 'negotiating', updated_at = NOW()

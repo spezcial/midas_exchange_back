@@ -989,7 +989,7 @@ func TestRejectOffer_Success(t *testing.T) {
 	otcRepo := &mockOTCRepo{order: order, message: msg}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.RejectOffer(context.Background(), "abc", 1, 10) // client rejects operator offer
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10, "client") // client rejects operator offer
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1010,7 +1010,7 @@ func TestRejectOffer_CannotRejectOwnOffer(t *testing.T) {
 	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
 	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10, "client")
 	if err == nil || err.Error() != "cannot reject your own offer" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1028,7 +1028,7 @@ func TestRejectOffer_NotPending(t *testing.T) {
 	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusNegotiating}}
 	svc := makeOTCService(&mockOTCRepo{order: order, message: msg}, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10, "client")
 	if err == nil || err.Error() != "offer is no longer pending" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestRejectOffer_WrongStatus(t *testing.T) {
 	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, UserID: 10, Status: domain.OTCStatusAwaitingPayment}}
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
 
-	err := svc.RejectOffer(context.Background(), "abc", 1, 10)
+	err := svc.RejectOffer(context.Background(), "abc", 1, 10, "client")
 	if err == nil || err.Error() != "order must be negotiating to reject an offer" {
 		t.Errorf("unexpected error: %v", err)
 	}

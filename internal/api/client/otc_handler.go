@@ -234,7 +234,7 @@ func (h *OTCHandler) RejectOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.otcService.RejectOffer(r.Context(), uid, messageID, userID); err != nil {
+	if err := h.otcService.RejectOffer(r.Context(), uid, messageID, userID, "client"); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}

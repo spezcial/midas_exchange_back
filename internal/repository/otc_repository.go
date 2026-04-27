@@ -281,11 +281,6 @@ func (r *OTCRepository) SetPaymentReceived(ctx context.Context, orderID int64) e
 	return r.db.QueryRowContext(ctx, queries.OTCOrderSetPaymentReceivedQuery, orderID).Scan(&updatedAt)
 }
 
-func (r *OTCRepository) Complete(ctx context.Context, orderID int64) error {
-	var updatedAt time.Time
-	return r.db.QueryRowContext(ctx, queries.OTCOrderCompleteQuery, orderID).Scan(&updatedAt)
-}
-
 func (r *OTCRepository) Expire(ctx context.Context, orderID int64) (bool, error) {
 	var updatedAt time.Time
 	err := r.db.QueryRowContext(ctx, queries.OTCOrderExpireQuery, orderID).Scan(&updatedAt)

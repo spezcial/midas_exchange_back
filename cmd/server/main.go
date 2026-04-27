@@ -42,12 +42,18 @@ func main() {
 	defer db.Close()
 	log.Info("Connected to database")
 
-	// Initialize in-memory cache
-	memCache := cache.NewMemoryCache(cache.NoExpiration, cache.NoExpiration) // No TTL
+	redisClient, err := database.NewRedis(cfg.Redis.Host, cfg.Redis.Port, cfg.Redis.Password)
+	if err != nil {
+		log.Error("Failed to connect to Redis", "error", err)
+		os.Exit(1)
+	}
+	defer redisClient.Close()
+	log.Info("Connected to Redis", "host", cfg.Redis.Host)
 
-	cacheService := cache.NewCacheService(memCache, log)
+	redisCache := cache.NewRedisCache(redisClient)
+	cacheService := cache.NewCacheService(redisCache)
 
-	log.Info("Initialized cache service with write workers")
+	log.Info("Initialized cache service")
 
 	// Initialize cache loader and warm up cache
 	cacheLoader := cache.NewCacheLoader(db, cacheService, log)

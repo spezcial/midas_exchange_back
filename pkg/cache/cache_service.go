@@ -2,387 +2,331 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/caspianex/exchange-backend/internal/domain"
-	"github.com/caspianex/exchange-backend/pkg/logger"
 )
 
-type WriteOperation struct {
-	Type   string
-	Key    string
-	Value  interface{}
-	Action string // "insert", "update", "delete"
-}
+const (
+	// l1TTL is the lifetime of exchange-rate and currency entries in the L1 cache.
+	// Short enough that a rate update (every 2 min) is reflected quickly; long enough
+	// to absorb request bursts without hitting Redis on every call.
+	l1TTL = 30 * time.Second
+)
 
+// CacheService provides typed read/write helpers over a primary Store (Redis)
+// with an L1 in-memory cache for exchange rates and currencies.
 type CacheService struct {
-	cache       *MemoryCache
-	logger      *logger.Logger
-	wg          sync.WaitGroup
-	ctx         context.Context
-	cancel      context.CancelFunc
-	workerCount int
+	store Store        // primary store — Redis
+	l1    *MemoryCache // L1 in-memory cache for hot read-only data
 }
 
-const NoExpiration time.Duration = -1
+func NewCacheService(store Store) *CacheService {
+	// L1 is always in-memory; entries expire after l1TTL so they stay fresh.
+	l1 := NewMemoryCache(l1TTL, 2*l1TTL)
+	return &CacheService{store: store, l1: l1}
+}
 
-func NewCacheService(cache *MemoryCache, logger *logger.Logger) *CacheService {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &CacheService{
-		cache:  cache,
-		logger: logger,
-		ctx:    ctx,
-		cancel: cancel,
+// ---- helpers ----------------------------------------------------------------
+
+func marshalSet(ctx context.Context, s Store, key string, v interface{}, ttl time.Duration) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
 	}
+	_ = s.Set(ctx, key, b, ttl)
 }
 
-// User cache operations
+func unmarshalGet[T any](ctx context.Context, s Store, key string) (*T, bool) {
+	b, found, err := s.Get(ctx, key)
+	if err != nil || !found {
+		return nil, false
+	}
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, false
+	}
+	return &v, true
+}
+
+func unmarshalSliceGet[T any](ctx context.Context, s Store, key string) ([]T, bool) {
+	b, found, err := s.Get(ctx, key)
+	if err != nil || !found {
+		return nil, false
+	}
+	var v []T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// ---- User -------------------------------------------------------------------
+
 func (cs *CacheService) GetUser(userID int64) (*domain.User, bool) {
 	key := fmt.Sprintf("user:%d", userID)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cachedUser, ok := val.(*domain.User)
-	if !ok {
-		return nil, false
-	}
-	// Return a copy to prevent mutations affecting the cache
-	userCopy := *cachedUser
-	return &userCopy, true
+	return unmarshalGet[domain.User](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) GetUserByEmail(email string) (*domain.User, bool) {
 	key := fmt.Sprintf("user:email:%s", email)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cachedUser, ok := val.(*domain.User)
-	if !ok {
-		return nil, false
-	}
-	// Return a copy to prevent mutations affecting the cache
-	userCopy := *cachedUser
-	return &userCopy, true
+	return unmarshalGet[domain.User](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) SetUser(user *domain.User) {
-	userCopy := *user // store a copy so external mutations to the original pointer don't corrupt the cache
-
-	keyByID := fmt.Sprintf("user:%d", user.ID)
-	keyByEmail := fmt.Sprintf("user:email:%s", user.Email)
-
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(keyByID, &userCopy, NoExpiration)
-	cs.cache.Set(keyByEmail, &userCopy, NoExpiration)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, fmt.Sprintf("user:%d", user.ID), user, NoExpiration)
+	marshalSet(ctx, cs.store, fmt.Sprintf("user:email:%s", user.Email), user, NoExpiration)
 }
 
-// Currency cache operations
+func (cs *CacheService) InvalidateUser(userID int64) {
+	_ = cs.store.Delete(context.Background(), fmt.Sprintf("user:%d", userID))
+}
+
+func (cs *CacheService) InvalidateUserEmail(email string) {
+	_ = cs.store.Delete(context.Background(), fmt.Sprintf("user:email:%s", email))
+}
+
+// ---- Currency (L1 + Redis) --------------------------------------------------
+
 func (cs *CacheService) GetCurrency(code string) (*domain.Currency, bool) {
 	key := fmt.Sprintf("currency:%s", code)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
+	ctx := context.Background()
+	// L1 first
+	if v, ok := unmarshalGet[domain.Currency](ctx, cs.l1, key); ok {
+		return v, true
 	}
-	cachedCurrency, ok := val.(*domain.Currency)
-	if !ok {
-		return nil, false
+	// Redis fallback
+	v, ok := unmarshalGet[domain.Currency](ctx, cs.store, key)
+	if ok {
+		marshalSet(ctx, cs.l1, key, v, l1TTL)
 	}
-	// Return a copy to prevent mutations affecting the cache
-	currencyCopy := *cachedCurrency
-	return &currencyCopy, true
+	return v, ok
 }
 
 func (cs *CacheService) GetAllCurrencies() ([]domain.Currency, bool) {
-	val, found := cs.cache.Get("currencies:all")
-	if !found {
-		return nil, false
+	key := "currencies:all"
+	ctx := context.Background()
+	if v, ok := unmarshalSliceGet[domain.Currency](ctx, cs.l1, key); ok {
+		return v, true
 	}
-	currencies, ok := val.([]domain.Currency)
-	return currencies, ok
+	v, ok := unmarshalSliceGet[domain.Currency](ctx, cs.store, key)
+	if ok {
+		b, _ := json.Marshal(v)
+		_ = cs.l1.Set(ctx, key, b, l1TTL)
+	}
+	return v, ok
 }
 
 func (cs *CacheService) SetCurrency(currency *domain.Currency) {
 	key := fmt.Sprintf("currency:%s", currency.Code)
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(key, currency, 0)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, key, currency, NoExpiration)
+	marshalSet(ctx, cs.l1, key, currency, l1TTL)
 }
 
 func (cs *CacheService) SetAllCurrencies(currencies []domain.Currency) {
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set("currencies:all", currencies, 0)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, "currencies:all", currencies, NoExpiration)
+	marshalSet(ctx, cs.l1, "currencies:all", currencies, l1TTL)
 	for i := range currencies {
 		cs.SetCurrency(&currencies[i])
 	}
 }
 
-// Exchange Rate cache operations
+// ---- Exchange Rate (L1 + Redis) ---------------------------------------------
+
 func (cs *CacheService) GetExchangeRate(fromCurrencyID, toCurrencyID int32) (*domain.ExchangeRate, bool) {
 	key := fmt.Sprintf("exchange_rate:%d:%d", fromCurrencyID, toCurrencyID)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
+	ctx := context.Background()
+	if v, ok := unmarshalGet[domain.ExchangeRate](ctx, cs.l1, key); ok {
+		return v, true
 	}
-	cachedRate, ok := val.(*domain.ExchangeRate)
-	if !ok {
-		return nil, false
+	v, ok := unmarshalGet[domain.ExchangeRate](ctx, cs.store, key)
+	if ok {
+		marshalSet(ctx, cs.l1, key, v, l1TTL)
 	}
-	// Return a copy to prevent mutations affecting the cache
-	rateCopy := *cachedRate
-	return &rateCopy, true
+	return v, ok
 }
 
-// Exchange Rate cache operations
 func (cs *CacheService) GetExchangeRateById(id int64) (*domain.ExchangeRate, bool) {
 	key := fmt.Sprintf("exchange_rate:id:%d", id)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
+	ctx := context.Background()
+	if v, ok := unmarshalGet[domain.ExchangeRate](ctx, cs.l1, key); ok {
+		return v, true
 	}
-	cachedRate, ok := val.(*domain.ExchangeRate)
-	if !ok {
-		return nil, false
+	v, ok := unmarshalGet[domain.ExchangeRate](ctx, cs.store, key)
+	if ok {
+		marshalSet(ctx, cs.l1, key, v, l1TTL)
 	}
-	// Return a copy to prevent mutations affecting the cache
-	rateCopy := *cachedRate
-	return &rateCopy, true
+	return v, ok
 }
 
 func (cs *CacheService) SetExchangeRate(rate *domain.ExchangeRate) {
 	key := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(key, rate, 0)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, key, rate, NoExpiration)
+	marshalSet(ctx, cs.l1, key, rate, l1TTL)
 }
 
-// UpdateExchangeRateCache updates all cache keys for a single exchange rate
-// This should be called after any Create/Update operation
 func (cs *CacheService) UpdateExchangeRateCache(rate *domain.ExchangeRate) {
-	rateCopy := *rate // store a copy so external mutations don't corrupt the cache
-
-	// Update cache by pair (from_currency_id, to_currency_id)
-	keyByPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
-	cs.cache.Set(keyByPair, &rateCopy, NoExpiration)
-
-	// Update cache by ID
-	keyByID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
-	cs.cache.Set(keyByID, &rateCopy, NoExpiration)
-
-	// Invalidate aggregate caches (they need to be reloaded)
-	cs.cache.Delete("exchange_rates:all")
-	cs.cache.Delete("exchange_rates:active")
+	ctx := context.Background()
+	keyPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
+	keyID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
+	marshalSet(ctx, cs.store, keyPair, rate, NoExpiration)
+	marshalSet(ctx, cs.store, keyID, rate, NoExpiration)
+	marshalSet(ctx, cs.l1, keyPair, rate, l1TTL)
+	marshalSet(ctx, cs.l1, keyID, rate, l1TTL)
+	_ = cs.store.Delete(ctx, "exchange_rates:all")
+	_ = cs.store.Delete(ctx, "exchange_rates:active")
+	_ = cs.l1.Delete(ctx, "exchange_rates:all")
+	_ = cs.l1.Delete(ctx, "exchange_rates:active")
 }
 
-// InvalidateExchangeRateCache removes all cache keys for a specific exchange rate
-// This should be called after Delete operation
-func (cs *CacheService) InvalidateExchangeRateCache(fromCurrencyID, toCurrencyID int32, id int64) {
-	// Delete cache by pair
-	keyByPair := fmt.Sprintf("exchange_rate:%d:%d", fromCurrencyID, toCurrencyID)
-	cs.cache.Delete(keyByPair)
-
-	// Delete cache by ID
-	keyByID := fmt.Sprintf("exchange_rate:id:%d", id)
-	cs.cache.Delete(keyByID)
-
-	// Invalidate aggregate caches
-	cs.cache.Delete("exchange_rates:all")
-	cs.cache.Delete("exchange_rates:active")
-}
-
-// InvalidateExchangeRateListCaches invalidates only the aggregate list caches
-// Useful when multiple rates are updated at once (batch operations)
-func (cs *CacheService) InvalidateExchangeRateListCaches() {
-	cs.cache.Delete("exchange_rates:all")
-	cs.cache.Delete("exchange_rates:active")
-}
-
-// UpdateExchangeRateCacheOnly updates individual cache keys without invalidating lists
-// Useful for batch operations where you want to invalidate lists only once at the end
 func (cs *CacheService) UpdateExchangeRateCacheOnly(rate *domain.ExchangeRate) {
-	rateCopy := *rate // store a copy so external mutations don't corrupt the cache
-
-	// Update cache by pair (from_currency_id, to_currency_id)
-	keyByPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
-	cs.cache.Set(keyByPair, &rateCopy, NoExpiration)
-
-	// Update cache by ID
-	keyByID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
-	cs.cache.Set(keyByID, &rateCopy, NoExpiration)
+	ctx := context.Background()
+	keyPair := fmt.Sprintf("exchange_rate:%d:%d", rate.FromCurrencyID, rate.ToCurrencyID)
+	keyID := fmt.Sprintf("exchange_rate:id:%d", rate.ID)
+	marshalSet(ctx, cs.store, keyPair, rate, NoExpiration)
+	marshalSet(ctx, cs.store, keyID, rate, NoExpiration)
+	marshalSet(ctx, cs.l1, keyPair, rate, l1TTL)
+	marshalSet(ctx, cs.l1, keyID, rate, l1TTL)
 }
 
-// Wallet cache operations
+func (cs *CacheService) InvalidateExchangeRateCache(fromCurrencyID, toCurrencyID int32, id int64) {
+	ctx := context.Background()
+	_ = cs.store.Delete(ctx, fmt.Sprintf("exchange_rate:%d:%d", fromCurrencyID, toCurrencyID))
+	_ = cs.store.Delete(ctx, fmt.Sprintf("exchange_rate:id:%d", id))
+	_ = cs.store.Delete(ctx, "exchange_rates:all")
+	_ = cs.store.Delete(ctx, "exchange_rates:active")
+	_ = cs.l1.Delete(ctx, fmt.Sprintf("exchange_rate:%d:%d", fromCurrencyID, toCurrencyID))
+	_ = cs.l1.Delete(ctx, fmt.Sprintf("exchange_rate:id:%d", id))
+	_ = cs.l1.Delete(ctx, "exchange_rates:all")
+	_ = cs.l1.Delete(ctx, "exchange_rates:active")
+}
+
+func (cs *CacheService) InvalidateExchangeRateListCaches() {
+	ctx := context.Background()
+	_ = cs.store.Delete(ctx, "exchange_rates:all")
+	_ = cs.store.Delete(ctx, "exchange_rates:active")
+	_ = cs.l1.Delete(ctx, "exchange_rates:all")
+	_ = cs.l1.Delete(ctx, "exchange_rates:active")
+}
+
+func (cs *CacheService) GetAllExchangeRates() ([]domain.ExchangeRateWithCurrencies, bool) {
+	ctx := context.Background()
+	if v, ok := unmarshalSliceGet[domain.ExchangeRateWithCurrencies](ctx, cs.l1, "exchange_rates:all"); ok {
+		return v, true
+	}
+	v, ok := unmarshalSliceGet[domain.ExchangeRateWithCurrencies](ctx, cs.store, "exchange_rates:all")
+	if ok {
+		b, _ := json.Marshal(v)
+		_ = cs.l1.Set(ctx, "exchange_rates:all", b, l1TTL)
+	}
+	return v, ok
+}
+
+func (cs *CacheService) GetActiveExchangeRates() ([]domain.ExchangeRateWithCurrencies, bool) {
+	ctx := context.Background()
+	if v, ok := unmarshalSliceGet[domain.ExchangeRateWithCurrencies](ctx, cs.l1, "exchange_rates:active"); ok {
+		return v, true
+	}
+	v, ok := unmarshalSliceGet[domain.ExchangeRateWithCurrencies](ctx, cs.store, "exchange_rates:active")
+	if ok {
+		b, _ := json.Marshal(v)
+		_ = cs.l1.Set(ctx, "exchange_rates:active", b, l1TTL)
+	}
+	return v, ok
+}
+
+func (cs *CacheService) SetAllExchangeRates(rates []domain.ExchangeRateWithCurrencies) {
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, "exchange_rates:all", rates, NoExpiration)
+	marshalSet(ctx, cs.l1, "exchange_rates:all", rates, l1TTL)
+}
+
+func (cs *CacheService) SetActiveExchangeRates(rates []domain.ExchangeRateWithCurrencies) {
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, "exchange_rates:active", rates, NoExpiration)
+	marshalSet(ctx, cs.l1, "exchange_rates:active", rates, l1TTL)
+}
+
+// ---- Wallet -----------------------------------------------------------------
+
 func (cs *CacheService) GetWallet(userID int64, currencyID int32) (*domain.Wallet, bool) {
 	key := fmt.Sprintf("wallet:%d:%d", userID, currencyID)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cachedWallet, ok := val.(*domain.Wallet)
-	if !ok {
-		return nil, false
-	}
-	// Return a copy to prevent mutations affecting the cache
-	walletCopy := *cachedWallet
-	return &walletCopy, true
+	return unmarshalGet[domain.Wallet](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) GetUserWallets(userID int64) ([]domain.WalletWithCurrency, bool) {
 	key := fmt.Sprintf("wallets:user:%d", userID)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	wallets, ok := val.([]domain.WalletWithCurrency)
-	return wallets, ok
+	return unmarshalSliceGet[domain.WalletWithCurrency](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) SetWallet(wallet *domain.Wallet) {
-	key := fmt.Sprintf("wallet:%d:%d", wallet.UserID, wallet.CurrencyID)
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(key, wallet, 0)
-
-	// Invalidate user wallets cache
-	userWalletsKey := fmt.Sprintf("wallets:user:%d", wallet.UserID)
-	cs.cache.Delete(userWalletsKey)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, fmt.Sprintf("wallet:%d:%d", wallet.UserID, wallet.CurrencyID), wallet, NoExpiration)
+	_ = cs.store.Delete(ctx, fmt.Sprintf("wallets:user:%d", wallet.UserID))
 }
 
 func (cs *CacheService) SetUserWallets(userID int64, wallets []domain.WalletWithCurrency) {
-	key := fmt.Sprintf("wallets:user:%d", userID)
-	// No TTL - synced with DB via cache_writer
-	cs.cache.Set(key, wallets, 0)
+	marshalSet(context.Background(), cs.store, fmt.Sprintf("wallets:user:%d", userID), wallets, NoExpiration)
 }
 
-// Session cache operations
+// ---- Session ----------------------------------------------------------------
+
 func (cs *CacheService) GetSession(token string) (*domain.UserSession, bool) {
 	key := fmt.Sprintf("session:%s", token)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cachedSession, ok := val.(*domain.UserSession)
-	if !ok {
-		return nil, false
-	}
-	// Return a copy to prevent mutations affecting the cache
-	sessionCopy := *cachedSession
-	return &sessionCopy, true
+	return unmarshalGet[domain.UserSession](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) SetSession(session *domain.UserSession, ttl time.Duration) {
-	key := fmt.Sprintf("session:%s", session.RefreshToken)
-	cs.cache.Set(key, session, ttl)
+	marshalSet(context.Background(), cs.store, fmt.Sprintf("session:%s", session.RefreshToken), session, ttl)
 }
 
 func (cs *CacheService) DeleteSession(token string) {
-	key := fmt.Sprintf("session:%s", token)
-	cs.cache.Delete(key)
+	_ = cs.store.Delete(context.Background(), fmt.Sprintf("session:%s", token))
 }
 
-func (cs *CacheService) GetAllExchangeRates() ([]domain.ExchangeRateWithCurrencies, bool) {
-	val, found := cs.cache.Get("exchange_rates:all")
-	if !found {
-		return nil, false
-	}
-	rates, ok := val.([]domain.ExchangeRateWithCurrencies)
-	return rates, ok
-}
-
-func (cs *CacheService) GetActiveExchangeRates() ([]domain.ExchangeRateWithCurrencies, bool) {
-	val, found := cs.cache.Get("exchange_rates:active")
-	if !found {
-		return nil, false
-	}
-	rates, ok := val.([]domain.ExchangeRateWithCurrencies)
-	return rates, ok
-}
-
-func (cs *CacheService) SetAllExchangeRates(rates []domain.ExchangeRateWithCurrencies) {
-	cs.cache.Set("exchange_rates:all", rates, NoExpiration)
-}
-
-func (cs *CacheService) SetActiveExchangeRates(rates []domain.ExchangeRateWithCurrencies) {
-	cs.cache.Set("exchange_rates:active", rates, NoExpiration)
-}
-
-func (cs *CacheService) DeleteExchangeRate(from, to int32) {
-	key := fmt.Sprintf("exchange_rate:%d:%d", from, to)
-	cs.cache.Delete(key)
-
-	// Invalidate list caches
-	cs.cache.Delete("exchange_rates:all")
-	cs.cache.Delete("exchange_rates:active")
-}
-
-// OTC Config cache operations
+// ---- OTC Config -------------------------------------------------------------
 
 func (cs *CacheService) GetOTCConfigs() ([]domain.OTCConfig, bool) {
-	val, found := cs.cache.Get("otc_config:all")
-	if !found {
-		return nil, false
-	}
-	configs, ok := val.([]domain.OTCConfig)
-	return configs, ok
+	return unmarshalSliceGet[domain.OTCConfig](context.Background(), cs.store, "otc_config:all")
 }
 
 func (cs *CacheService) GetOTCConfigByID(id int64) (*domain.OTCConfig, bool) {
-	key := fmt.Sprintf("otc_config:id:%d", id)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cached, ok := val.(*domain.OTCConfig)
-	if !ok {
-		return nil, false
-	}
-	copy := *cached
-	return &copy, true
+	return unmarshalGet[domain.OTCConfig](context.Background(), cs.store, fmt.Sprintf("otc_config:id:%d", id))
 }
 
 func (cs *CacheService) GetOTCConfigByPair(fromCurrencyID, toCurrencyID int64) (*domain.OTCConfig, bool) {
 	key := fmt.Sprintf("otc_config:pair:%d:%d", fromCurrencyID, toCurrencyID)
-	val, found := cs.cache.Get(key)
-	if !found {
-		return nil, false
-	}
-	cached, ok := val.(*domain.OTCConfig)
-	if !ok {
-		return nil, false
-	}
-	copy := *cached
-	return &copy, true
+	return unmarshalGet[domain.OTCConfig](context.Background(), cs.store, key)
 }
 
 func (cs *CacheService) SetOTCConfigs(configs []domain.OTCConfig) {
-	cs.cache.Set("otc_config:all", configs, NoExpiration)
+	ctx := context.Background()
+	marshalSet(ctx, cs.store, "otc_config:all", configs, NoExpiration)
 	for i := range configs {
-		cs.setOTCConfigKeys(&configs[i])
+		cs.setOTCConfigKeys(ctx, &configs[i])
 	}
 }
 
 func (cs *CacheService) SetOTCConfig(config *domain.OTCConfig) {
-	cs.setOTCConfigKeys(config)
-	cs.cache.Delete("otc_config:all") // list is now stale
+	ctx := context.Background()
+	cs.setOTCConfigKeys(ctx, config)
+	_ = cs.store.Delete(ctx, "otc_config:all")
 }
 
 func (cs *CacheService) InvalidateOTCConfig(id, fromCurrencyID, toCurrencyID int64) {
-	cs.cache.Delete(fmt.Sprintf("otc_config:id:%d", id))
-	cs.cache.Delete(fmt.Sprintf("otc_config:pair:%d:%d", fromCurrencyID, toCurrencyID))
-	cs.cache.Delete("otc_config:all")
+	ctx := context.Background()
+	_ = cs.store.Delete(ctx, fmt.Sprintf("otc_config:id:%d", id))
+	_ = cs.store.Delete(ctx, fmt.Sprintf("otc_config:pair:%d:%d", fromCurrencyID, toCurrencyID))
+	_ = cs.store.Delete(ctx, "otc_config:all")
 }
 
-func (cs *CacheService) setOTCConfigKeys(config *domain.OTCConfig) {
-	copy := *config
-	cs.cache.Set(fmt.Sprintf("otc_config:id:%d", config.ID), &copy, NoExpiration)
-	cs.cache.Set(fmt.Sprintf("otc_config:pair:%d:%d", config.FromCurrencyID, config.ToCurrencyID), &copy, NoExpiration)
-}
-
-// Utility functions
-func (cs *CacheService) InvalidateUser(userID int64) {
-	cs.cache.Delete(fmt.Sprintf("user:%d", userID))
-}
-
-func (cs *CacheService) InvalidateUserEmail(email string) {
-	cs.cache.Delete(fmt.Sprintf("user:email:%s", email))
+func (cs *CacheService) setOTCConfigKeys(ctx context.Context, config *domain.OTCConfig) {
+	marshalSet(ctx, cs.store, fmt.Sprintf("otc_config:id:%d", config.ID), config, NoExpiration)
+	marshalSet(ctx, cs.store, fmt.Sprintf("otc_config:pair:%d:%d", config.FromCurrencyID, config.ToCurrencyID), config, NoExpiration)
 }

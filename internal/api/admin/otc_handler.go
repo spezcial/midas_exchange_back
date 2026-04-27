@@ -334,7 +334,8 @@ func (h *AdminOTCHandler) RejectOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.otcService.RejectOffer(r.Context(), uid, messageID, rejectorID); err != nil {
+	rejectorRole, _ := middleware.GetUserRole(r.Context())
+	if err := h.otcService.RejectOffer(r.Context(), uid, messageID, rejectorID, rejectorRole); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
