@@ -228,7 +228,7 @@ func (s *CryptoGateService) InitiateWithdrawal(
 
 	// Store the initial hash returned by crypto-gate (may be empty until confirmed).
 	if txHash != "" {
-		tx.TxHash = txHash
+		tx.TxHash = domain.NullableTxHash(txHash)
 		if uErr := s.txRepo.Update(ctx, tx); uErr != nil {
 			s.log.Error("InitiateWithdrawal: failed to store tx hash", "tx_id", tx.ID, "error", uErr)
 		}
@@ -332,7 +332,7 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 	switch payload.Status {
 	case "success":
 		tx.Status = domain.TransactionStatusCompleted
-		tx.TxHash = payload.Hash
+		tx.TxHash = domain.NullableTxHash(payload.Hash)
 		if err := s.txRepo.Update(ctx, tx); err != nil {
 			return fmt.Errorf("withdraw webhook: update transaction: %w", err)
 		}
@@ -340,7 +340,7 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 
 	case "failed":
 		tx.Status = domain.TransactionStatusFailed
-		tx.TxHash = payload.Hash
+		tx.TxHash = domain.NullableTxHash(payload.Hash)
 		if err := s.txRepo.Update(ctx, tx); err != nil {
 			return fmt.Errorf("withdraw webhook: mark transaction failed: %w", err)
 		}

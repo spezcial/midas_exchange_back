@@ -27,7 +27,17 @@ type Transaction struct {
 	Amount    float64           `db:"amount" json:"amount"`
 	Fee       float64           `db:"fee" json:"fee"`
 	Status    TransactionStatus `db:"status" json:"status"`
-	TxHash    string            `db:"tx_hash" json:"tx_hash,omitempty"`
+	TxHash    *string           `db:"tx_hash" json:"tx_hash,omitempty"`
 	CreatedAt time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time         `db:"updated_at" json:"updated_at"`
+}
+
+// NullableTxHash returns nil for empty input and a pointer to the value otherwise.
+// Use whenever a Transaction is built from string input (HTTP request, service plumbing)
+// so an empty string is persisted as NULL.
+func NullableTxHash(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

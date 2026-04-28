@@ -226,7 +226,7 @@ func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID i
 		Amount:   amount,
 		Fee:      0,
 		Status:   domain.TransactionStatusCompleted,
-		TxHash:   txHash,
+		TxHash:   domain.NullableTxHash(txHash),
 	}
 	err = dbTx.QueryRowContext(ctx, queries.TransactionCreateQuery,
 		tx.UserID, tx.WalletID, tx.Type, tx.Amount, tx.Fee, tx.Status, tx.TxHash,
