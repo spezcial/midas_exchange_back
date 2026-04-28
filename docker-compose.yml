@@ -28,7 +28,7 @@ services:
       --requirepass ${REDIS_PASSWORD}
       --loglevel warning
     ports:
-      - "${REDIS_PORT}:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -97,6 +97,7 @@ services:
       - CRYPTO_GATE_TOKEN=${CRYPTO_GATE_TOKEN}
       - CRYPTO_GATE_WEBHOOK_SECRET=${CRYPTO_GATE_WEBHOOK_SECRET}
       - CRYPTO_GATE_PLATFORM=${CRYPTO_GATE_PLATFORM}
+      - TELEGRAM_GW_TOKEN=${TELEGRAM_GW_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy

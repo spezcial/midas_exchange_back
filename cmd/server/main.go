@@ -18,6 +18,7 @@ import (
 	"github.com/caspianex/exchange-backend/pkg/database"
 	"github.com/caspianex/exchange-backend/pkg/email"
 	"github.com/caspianex/exchange-backend/pkg/logger"
+	"github.com/caspianex/exchange-backend/pkg/telegramgw"
 	"github.com/caspianex/exchange-backend/pkg/worker"
 	"github.com/joho/godotenv"
 )
@@ -55,7 +56,6 @@ func main() {
 
 	log.Info("Initialized cache service")
 
-	// Initialize cache loader and warm up cache
 	cacheLoader := cache.NewCacheLoader(db, cacheService, log)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	if err := cacheLoader.WarmUpCache(ctx); err != nil {
@@ -79,7 +79,17 @@ func main() {
 		cfg.Email.SMTPFrom,
 	)
 
-	// Initialize repositories with cache service
+	// ── Telegram Gateway ────────────────────────────────────────────────────────
+	var tgGateway telegramgw.Gateway
+	if cfg.TelegramGW.APIToken != "" {
+		tgGateway = telegramgw.NewHTTPGateway(cfg.TelegramGW.APIToken, cfg.TelegramGW.BaseURL)
+		log.Info("Telegram Gateway integration enabled")
+	} else {
+		tgGateway = &telegramgw.NoOpGateway{}
+		log.Info("Telegram Gateway not configured — 2FA via Telegram disabled (NoOp)")
+	}
+
+	// ── Repositories ───────────────────────────────────────────────────────────
 	userRepo := repository.NewUserRepository(db, cacheService)
 	walletRepo := repository.NewWalletRepository(db, cacheService)
 	exchangeRepo := repository.NewCurrencyExchangeRepository(db, cacheService)
@@ -88,31 +98,53 @@ func main() {
 	oauthRepo := repository.NewOAuthRepository(db)
 	addrRepo := repository.NewDepositAddressRepository(db)
 	feeRepo := repository.NewPlatformFeeRepository(db)
+	passkeyRepo := repository.NewPasskeyRepository(db)
+	fingerprintRepo := repository.NewFingerprintRepository(db)
 
-	// Initialize services
+	// ── 2FA & WebAuthn services ────────────────────────────────────────────────
+	twofaService := service.NewTwoFactorService(redisCache, tgGateway, log)
+
+	var webAuthnService service.WebAuthnService
+	if cfg.WebAuthn.RPID != "" {
+		webAuthnService, err = service.NewWebAuthnService(
+			cfg.WebAuthn.RPID,
+			cfg.WebAuthn.RPDisplayName,
+			cfg.WebAuthn.RPOrigins,
+			passkeyRepo,
+			redisCache,
+			log,
+		)
+		if err != nil {
+			log.Error("Failed to init WebAuthn service", "error", err)
+			os.Exit(1)
+		}
+		log.Info("WebAuthn service enabled", "rp_id", cfg.WebAuthn.RPID)
+	} else {
+		webAuthnService = service.NewNoOpWebAuthnService()
+		log.Info("WebAuthn not configured — passkey 2FA disabled (NoOp)")
+	}
+
+	// ── Business services ──────────────────────────────────────────────────────
 	feeService := service.NewPlatformFeeService(feeRepo, log)
-	authService := service.NewAuthService(userRepo, walletRepo, jwtManager, emailService, cfg.App.BcryptCost, log)
+	authService := service.NewAuthService(
+		userRepo, walletRepo, passkeyRepo, fingerprintRepo,
+		jwtManager, emailService, twofaService, cfg.App.BcryptCost, log,
+	)
 	userService := service.NewUserService(userRepo, walletRepo, cfg.App.BcryptCost)
-	walletService := service.NewWalletService(walletRepo, txRepo, feeService)
+	walletService := service.NewWalletService(walletRepo, txRepo, feeService, twofaService)
 
-	// Wire up crypto-gate integration when configured
+	// Wire up crypto-gate
 	var cgService *service.CryptoGateService
 	if cfg.CryptoGate.BaseURL != "" && cfg.CryptoGate.Token != "" {
 		cgClient := cryptogate.NewClient(cfg.CryptoGate.BaseURL, cfg.CryptoGate.Token, cfg.CryptoGate.Platform)
-		cgService = service.NewCryptoGateService(cgClient, cfg.CryptoGate.Platform, addrRepo, walletRepo, txRepo, log)
+		cgService = service.NewCryptoGateService(cgClient, cfg.CryptoGate.Platform, addrRepo, walletRepo, txRepo, userRepo, twofaService, log)
 		walletService.SetCryptoGateService(cgService)
 		authService.SetCryptoGateService(cgService)
-		//pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		//if err := cgClient.Ping(pingCtx); err != nil {
-		//	log.Error("crypto-gate ping failed — check CRYPTO_GATE_URL and CRYPTO_GATE_TOKEN", "error", err)
-		//	pingCancel()
-		//	os.Exit(1)
-		//}
-		//pingCancel()
 		log.Info("Crypto-gate integration enabled", "url", cfg.CryptoGate.BaseURL)
 	} else {
 		log.Info("Crypto-gate integration disabled (CRYPTO_GATE_URL/TOKEN not set)")
 	}
+
 	exchangeService := service.NewCurrencyExchangeService(exchangeRepo, walletRepo, userRepo, emailService, feeService)
 	exchangeRatesService := service.NewExchangeRatesService(exchangeRateRepo, log)
 	oauthService := service.NewOAuthService(oauthRepo, userRepo, walletRepo, jwtManager, emailService, &cfg.OAuth, log)
@@ -123,20 +155,14 @@ func main() {
 
 	wsService := NewWebSocketService(exchangeRatesService, log, cfg.WebSocket.AllowedOrigins, cfg.WebSocket.ReadBufferSize, cfg.WebSocket.WriteBufferSize)
 
-	// Initialize background exchange rate updater worker
 	rateUpdaterConfig := worker.DefaultRateUpdaterConfig()
-	/* worker.RateUpdaterConfig{
-		UpdateInterval: cfg.Worker.RateUpdateInterval,
-		UpdateTimeout:  cfg.Worker.RateUpdateTimeout,
-		MaxRetries:     cfg.Worker.RateUpdateRetries,
-		RetryBackoff:   cfg.Worker.RateRetryBackoff,
-	}*/
 	rateUpdater := worker.NewRateUpdater(rateUpdaterConfig, exchangeRatesService, log)
 
 	router := setupRouter(
 		cfg,
 		log,
 		jwtManager,
+		redisCache,
 		wsService,
 		authService,
 		userService,
@@ -146,11 +172,12 @@ func main() {
 		oauthService,
 		otcService,
 		feeService,
+		twofaService,
+		webAuthnService,
 		cgService,
 		rateUpdater,
 	)
 
-	// Start background workers
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	defer backgroundCancel()
 
@@ -184,7 +211,6 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Stop background workers first
 		log.Info("Stopping background workers")
 		rateUpdater.Stop()
 

@@ -19,12 +19,14 @@ var ErrUnsupportedCurrency = errors.New("currency not supported by crypto gatewa
 // CryptoGateService orchestrates deposit address management and on-chain withdrawals
 // via the crypto-gate payment gateway.
 type CryptoGateService struct {
-	client      *cryptogate.Client
-	platform    string // gateway platform slug, included in every API call
-	addrRepo    *repository.DepositAddressRepository
-	walletRepo  *repository.WalletRepository
-	txRepo      *repository.TransactionRepository
-	log         *logger.Logger
+	client       *cryptogate.Client
+	platform     string // gateway platform slug, included in every API call
+	addrRepo     *repository.DepositAddressRepository
+	walletRepo   *repository.WalletRepository
+	txRepo       *repository.TransactionRepository
+	userRepo     repository.UserRepo
+	twofaService TwoFactorService
+	log          *logger.Logger
 }
 
 func NewCryptoGateService(
@@ -33,15 +35,19 @@ func NewCryptoGateService(
 	addrRepo *repository.DepositAddressRepository,
 	walletRepo *repository.WalletRepository,
 	txRepo *repository.TransactionRepository,
+	userRepo repository.UserRepo,
+	twofaService TwoFactorService,
 	log *logger.Logger,
 ) *CryptoGateService {
 	return &CryptoGateService{
-		client:     client,
-		platform:   platform,
-		addrRepo:   addrRepo,
-		walletRepo: walletRepo,
-		txRepo:     txRepo,
-		log:        log,
+		client:       client,
+		platform:     platform,
+		addrRepo:     addrRepo,
+		walletRepo:   walletRepo,
+		txRepo:       txRepo,
+		userRepo:     userRepo,
+		twofaService: twofaService,
+		log:          log,
 	}
 }
 
@@ -279,7 +285,24 @@ func (s *CryptoGateService) HandleDepositWebhook(ctx context.Context, payload do
 		"asset", payload.Asset,
 		"hash", payload.Hash,
 	)
+
+	// Fire-and-forget Telegram notification if the user has a verified phone.
+	go s.notifyDeposit(addrRecord.UserID, payload.Amount, payload.Asset)
+
 	return nil
+}
+
+func (s *CryptoGateService) notifyDeposit(userID int64, amount, asset string) {
+	if s.twofaService == nil || s.userRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil || user.Phone == nil || !user.PhoneVerified {
+		return
+	}
+	msg := fmt.Sprintf("Your CaspianEx account has been credited: %s %s", amount, asset)
+	s.twofaService.SendSecurityAlert(ctx, *user.Phone, msg)
 }
 
 // HandleWithdrawWebhook processes an inbound withdrawal status update from crypto-gate.

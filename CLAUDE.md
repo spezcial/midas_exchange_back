@@ -64,6 +64,11 @@ pkg/
 - **Background Workers**: `RateUpdater` periodically updates exchange rates
 - **WebSocket**: Real-time exchange rate updates via `/ws` endpoint
 - **Graceful Shutdown**: Proper cleanup of workers, connections, and server
+- **Repository interfaces**: `internal/repository/interfaces.go` defines `UserRepo` and `WalletRepo` interfaces used by services so they can be unit-tested with in-memory fakes
+- **2FA / action tokens**: `TwoFactorService` (Redis-backed) manages OTP codes, pending-2FA sessions, and purpose-bound single-use action tokens. `WebAuthnService` handles passkey ceremonies.
+- **JWT blocklist**: On logout the JTI is stored in Redis with the token's remaining TTL. `AuthMiddleware` checks the blocklist on every request.
+- **Login fingerprint**: SHA256(IP+UA) stored in `user_fingerprints`; new-device Telegram alert sent on first use.
+- **Action token pattern**: sensitive actions (withdraw, change password) require a pre-verified, purpose-bound, single-use token (5-min TTL) obtained via the challenge/verify flow.
 
 ### Roles (RBAC)
 
@@ -139,3 +144,45 @@ PostgreSQL with golang-migrate. Migrations in `migrations/` directory:
 - `000006_add_roles` - CHECK constraint on `users.role` for all valid role values
 - `000007_otc` - `otc_orders` and `otc_messages` tables
 - `000010_otc_audit_log` - `otc_audit_log` table (actor_id, actor_role, action, details, created_at)
+- `000011_crypto_deposit_addresses` - `deposit_addresses` table (user_id, currency_id, chain, address)
+- `000016_2fa` - adds `phone_verified` to users, creates `passkey_credentials` and `user_fingerprints` tables
+
+### 2FA / Security Endpoints
+
+**Auth** (`/api/v1/auth/`):
+| Method | Path | Description |
+|---|---|---|
+| POST | `/login` | Returns `{auth}` or `{two_fa_required, temp_token, methods}` |
+| POST | `/logout` | Blocklists JWT JTI in Redis |
+| POST | `/2fa/telegram` | Sends Telegram OTP to pending login session's phone |
+| POST | `/2fa/verify-telegram` | Verifies OTP, issues real tokens |
+| POST | `/2fa/passkey/begin` | Begin passkey assertion for login |
+| POST | `/2fa/passkey/finish` | Finish passkey assertion, issues real tokens |
+| POST | `/forgot-password/send` | Sends OTP to phone (always 200, no enumeration) |
+| POST | `/forgot-password/verify` | Verifies OTP, returns action token |
+| POST | `/forgot-password/reset` | Resets password with action token |
+
+**Phone management** (`/api/v1/`):
+| Method | Path | Description |
+|---|---|---|
+| POST | `/phone/send-otp` | Sends OTP to new phone (checks uniqueness first) |
+| POST | `/phone/verify` | Verifies OTP and saves phone |
+| DELETE | `/phone` | Removes phone (requires passkey to exist) |
+
+**Passkey management** (`/api/v1/`):
+| Method | Path | Description |
+|---|---|---|
+| POST | `/passkeys/begin` | Begin passkey registration ceremony |
+| POST | `/passkeys/finish` | Finish passkey registration ceremony |
+| GET | `/passkeys` | List registered passkeys |
+| DELETE | `/passkeys/{id}` | Delete passkey (requires phone to exist) |
+
+**Action token flow** (`/api/v1/`):
+| Method | Path | Description |
+|---|---|---|
+| POST | `/action/challenge` | Sends OTP to verified phone for sensitive action |
+| POST | `/action/verify-telegram` | Verifies OTP, returns action_token |
+| POST | `/action/passkey/begin` | Begin passkey assertion for action token |
+| POST | `/action/passkey/finish` | Finish passkey assertion, returns action_token |
+
+Action token is then passed in `action_token` field of withdraw/change-password requests.

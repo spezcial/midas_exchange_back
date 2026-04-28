@@ -9,17 +9,32 @@ import (
 )
 
 type Config struct {
-	Server      ServerConfig
-	Database    DatabaseConfig
-	WebSocket   WebSocketConfig
-	Redis       RedisConfig
-	JWT         JWTConfig
-	Email       EmailConfig
-	App         AppConfig
-	Payment     PaymentConfig
-	Worker      WorkerConfig
-	OAuth       OAuthConfig
-	CryptoGate  CryptoGateConfig
+	Server     ServerConfig
+	Database   DatabaseConfig
+	WebSocket  WebSocketConfig
+	Redis      RedisConfig
+	JWT        JWTConfig
+	Email      EmailConfig
+	App        AppConfig
+	Payment    PaymentConfig
+	Worker     WorkerConfig
+	OAuth      OAuthConfig
+	CryptoGate CryptoGateConfig
+	TelegramGW TelegramGWConfig
+	WebAuthn   WebAuthnConfig
+}
+
+// TelegramGWConfig holds credentials for the Telegram Gateway API.
+type TelegramGWConfig struct {
+	APIToken string
+	BaseURL  string // optional override; defaults to the production URL
+}
+
+// WebAuthnConfig holds the Relying Party settings for WebAuthn / FIDO2.
+type WebAuthnConfig struct {
+	RPID          string   // bare domain, e.g. "caspianex.com"
+	RPDisplayName string   // human-readable name, e.g. "CaspianEx"
+	RPOrigins     []string // full origins, e.g. ["https://caspianex.com"]
 }
 
 type CryptoGateConfig struct {
@@ -191,6 +206,15 @@ func Load() (*Config, error) {
 			Token:         getEnv("CRYPTO_GATE_TOKEN", ""),
 			WebhookSecret: getEnv("CRYPTO_GATE_WEBHOOK_SECRET", ""),
 			Platform:      getEnv("CRYPTO_GATE_PLATFORM", ""),
+		},
+		TelegramGW: TelegramGWConfig{
+			APIToken: getEnv("TELEGRAM_GW_TOKEN", ""),
+			BaseURL:  getEnv("TELEGRAM_GW_BASE_URL", ""),
+		},
+		WebAuthn: WebAuthnConfig{
+			RPID:          getEnv("WEBAUTHN_RP_ID", "localhost"),
+			RPDisplayName: getEnv("WEBAUTHN_RP_DISPLAY_NAME", "CaspianEx"),
+			RPOrigins:     parseStringSlice(getEnv("WEBAUTHN_RP_ORIGINS", "http://localhost:5173")),
 		},
 	}
 

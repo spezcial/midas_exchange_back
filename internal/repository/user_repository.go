@@ -68,12 +68,8 @@ func (r *UserRepository) GetByID(ctx context.Context, id int64) (*domain.User, e
 }
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
-	// Check cache first
-	if user, found := r.cacheService.GetUserByEmail(email); found {
-		return user, nil
-	}
-
-	// Cache miss - fetch from DB
+	// Bypass cache — callers (registration, forgot-password) need a DB-authoritative
+	// result and must not receive a cached copy with an empty PasswordHash.
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, queries.UserGetByEmailQuery, email)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -82,10 +78,6 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*domain.
 	if err != nil {
 		return nil, err
 	}
-
-	// Update cache
-	r.cacheService.SetUser(&user)
-
 	return &user, nil
 }
 
@@ -121,7 +113,7 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passw
 func (r *UserRepository) UpdateProfile(ctx context.Context, user *domain.User) error {
 	if err := r.db.QueryRowContext(
 		ctx, queries.UserUpdateProfileQuery,
-		user.FirstName, user.LastName, user.MiddleName, user.Phone, user.KycLevel, user.ID,
+		user.FirstName, user.LastName, user.MiddleName, user.KycLevel, user.ID,
 	).Scan(&user.UpdatedAt); err != nil {
 		return err
 	}
@@ -224,12 +216,8 @@ func (r *UserRepository) DeleteSession(ctx context.Context, token string) error 
 }
 
 func (r *UserRepository) GetByEmailAnyRole(ctx context.Context, email string) (*domain.User, error) {
-	// Check cache first
-	if user, found := r.cacheService.GetUserByEmail(email); found {
-		return user, nil
-	}
-
-	// Cache miss - fetch from DB
+	// Bypass cache — this is the login path and PasswordHash must come from the DB.
+	// The User struct has json:"-" on PasswordHash, so cached copies have an empty hash.
 	var user domain.User
 	err := r.db.GetContext(ctx, &user, queries.UserGetByEmailAnyRoleQuery, email)
 	if err == sql.ErrNoRows {
@@ -238,10 +226,6 @@ func (r *UserRepository) GetByEmailAnyRole(ctx context.Context, email string) (*
 	if err != nil {
 		return nil, err
 	}
-
-	// Update cache
-	r.cacheService.SetUser(&user)
-
 	return &user, nil
 }
 
@@ -308,4 +292,37 @@ func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (*d
 	r.cacheService.SetUser(&user)
 
 	return &user, nil
+}
+
+// GetByPhone looks up a user by their phone number. Returns sql.ErrNoRows if not found.
+func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*domain.User, error) {
+	var user domain.User
+	err := r.db.GetContext(ctx, &user, queries.UserGetByPhoneQuery, phone)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, sql.ErrNoRows
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UpdatePhone sets the phone number and phone_verified flag for a user.
+func (r *UserRepository) UpdatePhone(ctx context.Context, userID int64, phone *string, verified bool) error {
+	if err := r.db.QueryRowContext(ctx, queries.UserUpdatePhoneQuery, phone, verified, userID).Scan(new(time.Time)); err != nil {
+		return err
+	}
+	// Invalidate cache so the updated phone/verified fields are fetched fresh.
+	if user, found := r.cacheService.GetUser(userID); found {
+		r.cacheService.InvalidateUserEmail(user.Email)
+	}
+	r.cacheService.InvalidateUser(userID)
+	return nil
+}
+
+// DeleteAllSessionsByUserID removes every session for a user.
+// Called after password change or password reset to invalidate all existing logins.
+func (r *UserRepository) DeleteAllSessionsByUserID(ctx context.Context, userID int64) error {
+	_, err := r.db.ExecContext(ctx, queries.UserSessionDeleteAllByUserIDQuery, userID)
+	return err
 }

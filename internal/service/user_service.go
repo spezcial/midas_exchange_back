@@ -236,7 +236,7 @@ func (s *UserService) GetProfile(ctx context.Context, userID int64) (*UserProfil
 	}, nil
 }
 
-func (s *UserService) UpdateProfile(ctx context.Context, userID int64, firstName, lastName string, middleName, phone *string, kycLevel int) (*UserProfile, error) {
+func (s *UserService) UpdateProfile(ctx context.Context, userID int64, firstName, lastName string, middleName *string, kycLevel int) (*UserProfile, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID int64, firstName
 	user.FirstName = firstName
 	user.LastName = lastName
 	user.MiddleName = middleName
-	user.Phone = phone
+	// Phone is intentionally not updated here — use /profile/phone/* endpoints.
 	user.KycLevel = kycLevel
 
 	if err := s.userRepo.UpdateProfile(ctx, user); err != nil {

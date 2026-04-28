@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -21,6 +22,7 @@ type Claims struct {
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	Type   string `json:"type"`
+	JTI    string `json:"jti"` // unique token ID used for logout blocklisting
 	jwt.RegisteredClaims
 }
 
@@ -42,13 +44,18 @@ func (j *JWTManager) GenerateAccessToken(userID int64, email, role string) (stri
 	return j.GenerateAccessTokenWithExpiry(userID, email, role, j.accessTokenExpiry)
 }
 
-// GenerateAccessTokenWithExpiry generates an access token with a custom expiry duration
 func (j *JWTManager) GenerateAccessTokenWithExpiry(userID int64, email, role string, expiry time.Duration) (string, error) {
+	jti, err := generateJTI()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate token ID: %w", err)
+	}
+
 	claims := Claims{
 		UserID: userID,
 		Email:  email,
 		Role:   role,
 		Type:   string(AccessToken),
+		JTI:    jti,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -84,4 +91,12 @@ func (j *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, fmt.Errorf("invalid token")
+}
+
+func generateJTI() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

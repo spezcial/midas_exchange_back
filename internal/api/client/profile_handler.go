@@ -21,7 +21,6 @@ type updateProfileRequest struct {
 	FirstName  string  `json:"first_name" validate:"required"`
 	LastName   string  `json:"last_name" validate:"required"`
 	MiddleName *string `json:"middle_name"`
-	Phone      *string `json:"phone"`
 }
 
 func (h *ProfileHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +64,7 @@ func (h *ProfileHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, err := h.userService.UpdateProfile(r.Context(), userID, req.FirstName, req.LastName, req.MiddleName, req.Phone, current.KycLevel)
+	profile, err := h.userService.UpdateProfile(r.Context(), userID, req.FirstName, req.LastName, req.MiddleName, current.KycLevel)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

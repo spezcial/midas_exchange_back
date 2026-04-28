@@ -31,8 +31,8 @@ const (
 
 	UserUpdateProfileQuery = `
 		UPDATE users
-		SET first_name = $1, last_name = $2, middle_name = $3, phone = $4, kyc_level = $5, updated_at = NOW()
-		WHERE id = $6
+		SET first_name = $1, last_name = $2, middle_name = $3, kyc_level = $4, updated_at = NOW()
+		WHERE id = $5
 		RETURNING updated_at
 `
 
@@ -56,4 +56,15 @@ const (
 	UserSessionGetByTokenQuery = `SELECT * FROM user_sessions WHERE refresh_token = $1 AND expires_at > NOW()`
 
 	UserSessionDeleteQuery = `DELETE FROM user_sessions WHERE refresh_token = $1`
+
+	UserSessionDeleteAllByUserIDQuery = `DELETE FROM user_sessions WHERE user_id = $1`
+
+	UserGetByPhoneQuery = `SELECT * FROM users WHERE phone = $1`
+
+	UserUpdatePhoneQuery = `
+		UPDATE users
+		SET phone = $1, phone_verified = $2, updated_at = NOW()
+		WHERE id = $3
+		RETURNING updated_at
+`
 )

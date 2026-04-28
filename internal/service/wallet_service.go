@@ -10,21 +10,24 @@ import (
 )
 
 type WalletService struct {
-	walletRepo *repository.WalletRepository
-	txRepo     *repository.TransactionRepository
-	feeService *PlatformFeeService
-	cgService  *CryptoGateService // optional; nil if crypto-gate is not configured
+	walletRepo   *repository.WalletRepository
+	txRepo       *repository.TransactionRepository
+	feeService   *PlatformFeeService
+	twofaService TwoFactorService   // validates action tokens before withdrawals
+	cgService    *CryptoGateService // optional; nil if crypto-gate is not configured
 }
 
 func NewWalletService(
 	walletRepo *repository.WalletRepository,
 	txRepo *repository.TransactionRepository,
 	feeService *PlatformFeeService,
+	twofaService TwoFactorService,
 ) *WalletService {
 	return &WalletService{
-		walletRepo: walletRepo,
-		txRepo:     txRepo,
-		feeService: feeService,
+		walletRepo:   walletRepo,
+		txRepo:       txRepo,
+		feeService:   feeService,
+		twofaService: twofaService,
 	}
 }
 
@@ -53,6 +56,19 @@ func (s *WalletService) Deposit(ctx context.Context, userID int64, req *models.D
 }
 
 func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.WithdrawRequest) (*domain.Transaction, error) {
+	// Validate the action token before touching any balances.
+	// An empty token means the user has no 2FA set up and cannot withdraw.
+	if req.ActionToken == "" {
+		return nil, ErrNoTwoFAMethod
+	}
+	ownerID, err := s.twofaService.ConsumeActionToken(ctx, req.ActionToken, domain.ActionWithdraw)
+	if err != nil {
+		return nil, fmt.Errorf("withdraw authorisation failed: %w", err)
+	}
+	if ownerID != userID {
+		return nil, fmt.Errorf("action token does not belong to this user")
+	}
+
 	currency, err := s.walletRepo.GetCurrencyByCode(ctx, req.CurrencyCode)
 	if err != nil {
 		return nil, fmt.Errorf("currency not found: %w", err)
