@@ -212,7 +212,7 @@ func (r *WalletRepository) AtomicCredit(ctx context.Context, walletID int64, amo
 
 // RecordDeposit atomically creates a completed deposit transaction record and credits
 // the wallet in a single DB transaction. A crash between the two writes is impossible.
-func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID int64, amount float64, txHash string) (*domain.Transaction, error) {
+func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID int64, amount float64, txHash *string) (*domain.Transaction, error) {
 	dbTx, err := r.db.BeginTx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)

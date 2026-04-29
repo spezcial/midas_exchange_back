@@ -37,5 +37,5 @@ const (
 		LIMIT $1 OFFSET $2
 `
 
-	TransactionExistsByTxHashQuery = `SELECT EXISTS(SELECT 1 FROM transactions WHERE tx_hash = $1 AND tx_hash != '')`
+	TransactionExistsByTxHashQuery = `SELECT EXISTS(SELECT 1 FROM transactions WHERE tx_hash = $1)`
 )

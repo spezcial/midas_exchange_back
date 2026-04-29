@@ -228,7 +228,7 @@ func (s *CryptoGateService) InitiateWithdrawal(
 
 	// Store the initial hash returned by crypto-gate (may be empty until confirmed).
 	if txHash != "" {
-		tx.TxHash = txHash
+		tx.TxHash = &txHash
 		if uErr := s.txRepo.Update(ctx, tx); uErr != nil {
 			s.log.Error("InitiateWithdrawal: failed to store tx hash", "tx_id", tx.ID, "error", uErr)
 		}
@@ -273,7 +273,7 @@ func (s *CryptoGateService) HandleDepositWebhook(ctx context.Context, payload do
 
 	// RecordDeposit wraps the transaction insert and balance credit in a single DB
 	// transaction — a crash between the two writes cannot leave them inconsistent.
-	tx, err := s.walletRepo.RecordDeposit(ctx, addrRecord.UserID, wallet.ID, amount, payload.Hash)
+	tx, err := s.walletRepo.RecordDeposit(ctx, addrRecord.UserID, wallet.ID, amount, hashPtr(payload.Hash))
 	if err != nil {
 		return fmt.Errorf("deposit webhook: record deposit: %w", err)
 	}
@@ -332,7 +332,7 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 	switch payload.Status {
 	case "success":
 		tx.Status = domain.TransactionStatusCompleted
-		tx.TxHash = payload.Hash
+		tx.TxHash = hashPtr(payload.Hash)
 		if err := s.txRepo.Update(ctx, tx); err != nil {
 			return fmt.Errorf("withdraw webhook: update transaction: %w", err)
 		}
@@ -340,7 +340,7 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 
 	case "failed":
 		tx.Status = domain.TransactionStatusFailed
-		tx.TxHash = payload.Hash
+		tx.TxHash = hashPtr(payload.Hash)
 		if err := s.txRepo.Update(ctx, tx); err != nil {
 			return fmt.Errorf("withdraw webhook: mark transaction failed: %w", err)
 		}
@@ -357,4 +357,12 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 	}
 
 	return nil
+}
+
+// hashPtr converts a blockchain hash string to a pointer, returning nil for empty strings.
+func hashPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

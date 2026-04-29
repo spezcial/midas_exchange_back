@@ -79,6 +79,7 @@ func (u *webAuthnUser) WebAuthnCredentials() []webauthn.Credential {
 			PublicKey: c.PublicKey,
 			Flags: webauthn.CredentialFlags{
 				BackupEligible: c.BackupEligible,
+				BackupState:    c.BackupState,
 			},
 			Authenticator: webauthn.Authenticator{
 				AAGUID:    c.AAGUID,
@@ -194,6 +195,7 @@ func (s *webAuthnService) FinishRegistration(ctx context.Context, userID int64, 
 		AAGUID:         cred.Authenticator.AAGUID,
 		SignCount:      cred.Authenticator.SignCount,
 		BackupEligible: cred.Flags.BackupEligible,
+		BackupState:    cred.Flags.BackupState,
 		Name:           name,
 	}
 
@@ -253,7 +255,7 @@ func (s *webAuthnService) FinishAuthentication(ctx context.Context, userID int64
 
 	// Update sign_count in DB to detect cloned credentials on future attempts.
 	credID := base64.RawURLEncoding.EncodeToString(updatedCred.ID)
-	if err := s.passkeyRepo.UpdateSignCount(ctx, credID, updatedCred.Authenticator.SignCount); err != nil {
+	if err := s.passkeyRepo.UpdateSignCount(ctx, credID, updatedCred.Authenticator.SignCount, updatedCred.Flags.BackupState); err != nil {
 		// Non-fatal — don't fail the login, but log so ops can detect persistent drift.
 		s.logger.Warn("failed to update passkey sign_count — clone detection may be impaired",
 			"cred_id", credID, "error", err)

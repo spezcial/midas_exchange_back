@@ -16,7 +16,7 @@ type PasskeyRepository interface {
 	Create(ctx context.Context, cred *domain.PasskeyCredential) error
 	GetByUserID(ctx context.Context, userID int64) ([]domain.PasskeyCredential, error)
 	GetByCredentialID(ctx context.Context, credentialID string) (*domain.PasskeyCredential, error)
-	UpdateSignCount(ctx context.Context, credentialID string, signCount uint32) error
+	UpdateSignCount(ctx context.Context, credentialID string, signCount uint32, backupState bool) error
 	Delete(ctx context.Context, id int64, userID int64) error
 	CountByUserID(ctx context.Context, userID int64) (int, error)
 }
@@ -33,7 +33,7 @@ func NewPasskeyRepository(db *database.Postgres) PasskeyRepository {
 
 func (r *passkeyRepository) Create(ctx context.Context, cred *domain.PasskeyCredential) error {
 	return r.db.QueryRowContext(ctx, queries.PasskeyCreateQuery,
-		cred.UserID, cred.CredentialID, cred.PublicKey, cred.AAGUID, cred.SignCount, cred.BackupEligible, cred.Name,
+		cred.UserID, cred.CredentialID, cred.PublicKey, cred.AAGUID, cred.SignCount, cred.BackupEligible, cred.BackupState, cred.Name,
 	).Scan(&cred.ID, &cred.CreatedAt)
 }
 
@@ -52,8 +52,8 @@ func (r *passkeyRepository) GetByCredentialID(ctx context.Context, credentialID 
 	return &cred, err
 }
 
-func (r *passkeyRepository) UpdateSignCount(ctx context.Context, credentialID string, signCount uint32) error {
-	_, err := r.db.ExecContext(ctx, queries.PasskeyUpdateSignCountQuery, signCount, credentialID)
+func (r *passkeyRepository) UpdateSignCount(ctx context.Context, credentialID string, signCount uint32, backupState bool) error {
+	_, err := r.db.ExecContext(ctx, queries.PasskeyUpdateSignCountQuery, signCount, backupState, credentialID)
 	return err
 }
 

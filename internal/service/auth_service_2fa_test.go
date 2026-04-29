@@ -118,7 +118,9 @@ func (f *fakePasskeyRepo) GetByUserID(_ context.Context, _ int64) ([]domain.Pass
 func (f *fakePasskeyRepo) GetByCredentialID(_ context.Context, _ string) (*domain.PasskeyCredential, error) {
 	return nil, errors.New("not found")
 }
-func (f *fakePasskeyRepo) UpdateSignCount(_ context.Context, _ string, _ uint32) error { return nil }
+func (f *fakePasskeyRepo) UpdateSignCount(_ context.Context, _ string, _ uint32, _ bool) error {
+	return nil
+}
 func (f *fakePasskeyRepo) Delete(_ context.Context, _ int64, _ int64) error            { return nil }
 func (f *fakePasskeyRepo) CountByUserID(_ context.Context, id int64) (int, error) {
 	return f.counts[id], nil

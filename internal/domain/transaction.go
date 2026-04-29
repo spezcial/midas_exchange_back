@@ -27,7 +27,7 @@ type Transaction struct {
 	Amount    float64           `db:"amount" json:"amount"`
 	Fee       float64           `db:"fee" json:"fee"`
 	Status    TransactionStatus `db:"status" json:"status"`
-	TxHash    string            `db:"tx_hash" json:"tx_hash,omitempty"`
+	TxHash    *string           `db:"tx_hash" json:"tx_hash,omitempty"`
 	CreatedAt time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time         `db:"updated_at" json:"updated_at"`
 }
