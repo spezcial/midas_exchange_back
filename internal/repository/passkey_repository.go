@@ -33,7 +33,7 @@ func NewPasskeyRepository(db *database.Postgres) PasskeyRepository {
 
 func (r *passkeyRepository) Create(ctx context.Context, cred *domain.PasskeyCredential) error {
 	return r.db.QueryRowContext(ctx, queries.PasskeyCreateQuery,
-		cred.UserID, cred.CredentialID, cred.PublicKey, cred.AAGUID, cred.SignCount, cred.Name,
+		cred.UserID, cred.CredentialID, cred.PublicKey, cred.AAGUID, cred.SignCount, cred.BackupEligible, cred.Name,
 	).Scan(&cred.ID, &cred.CreatedAt)
 }
 

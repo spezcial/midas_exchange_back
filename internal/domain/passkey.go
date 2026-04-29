@@ -9,8 +9,9 @@ type PasskeyCredential struct {
 	CredentialID string     `db:"credential_id" json:"credential_id"` // base64url
 	PublicKey    []byte     `db:"public_key"    json:"-"`
 	AAGUID       []byte     `db:"aaguid"        json:"-"`
-	SignCount    uint32     `db:"sign_count"    json:"-"`
-	Name         string     `db:"name"          json:"name"`
+	SignCount      uint32     `db:"sign_count"       json:"-"`
+	BackupEligible bool       `db:"backup_eligible"  json:"-"`
+	Name           string     `db:"name"             json:"name"`
 	CreatedAt    time.Time  `db:"created_at"    json:"created_at"`
 	LastUsedAt   *time.Time `db:"last_used_at"  json:"last_used_at,omitempty"`
 }

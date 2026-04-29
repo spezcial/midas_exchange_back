@@ -77,6 +77,9 @@ func (u *webAuthnUser) WebAuthnCredentials() []webauthn.Credential {
 		out = append(out, webauthn.Credential{
 			ID:        rawID,
 			PublicKey: c.PublicKey,
+			Flags: webauthn.CredentialFlags{
+				BackupEligible: c.BackupEligible,
+			},
 			Authenticator: webauthn.Authenticator{
 				AAGUID:    c.AAGUID,
 				SignCount: c.SignCount,
@@ -185,12 +188,13 @@ func (s *webAuthnService) FinishRegistration(ctx context.Context, userID int64, 
 	}
 
 	domainCred := &domain.PasskeyCredential{
-		UserID:       userID,
-		CredentialID: base64.RawURLEncoding.EncodeToString(cred.ID),
-		PublicKey:    cred.PublicKey,
-		AAGUID:       cred.Authenticator.AAGUID,
-		SignCount:    cred.Authenticator.SignCount,
-		Name:         name,
+		UserID:         userID,
+		CredentialID:   base64.RawURLEncoding.EncodeToString(cred.ID),
+		PublicKey:      cred.PublicKey,
+		AAGUID:         cred.Authenticator.AAGUID,
+		SignCount:      cred.Authenticator.SignCount,
+		BackupEligible: cred.Flags.BackupEligible,
+		Name:           name,
 	}
 
 	if err := s.passkeyRepo.Create(ctx, domainCred); err != nil {
