@@ -1,6 +1,6 @@
 .PHONY: help up down restart logs app-refresh db-migrate db-reset db-shell db-exec db-deactivate-unsupported-currencies db-clear-users db-list-users status ps admin-promote docker-prune
 
-COMPOSE := docker compose -f docker-compose.prod.yml
+COMPOSE := docker compose --env-file .env.prod -f docker-compose.prod.yml
 
 # Colors for terminal output
 CYAN := \033[0;36m
