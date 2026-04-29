@@ -243,6 +243,7 @@ func (s *webAuthnService) FinishAuthentication(ctx context.Context, userID int64
 
 	updatedCred, err := s.wa.FinishLogin(wUser, payload.SessionData, r)
 	if err != nil {
+		s.logger.Error("webauthn: finish login failed", "user_id", userID, "error", err)
 		return fmt.Errorf("webauthn: finish login: %w", err)
 	}
 
