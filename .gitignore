@@ -30,3 +30,6 @@ vendor/
 
 # Logs
 *.log
+
+# Local docker-compose overrides (per-developer)
+docker-compose.override.yml
