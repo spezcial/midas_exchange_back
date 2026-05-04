@@ -6,6 +6,7 @@ import (
 	"github.com/caspianex/exchange-backend/const/queries"
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/pkg/database"
+	"github.com/shopspring/decimal"
 )
 
 type PlatformFeeRepository struct {
@@ -35,7 +36,7 @@ func (r *PlatformFeeRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // Totals returns exchange and withdrawal fee sums in a single DB query.
-func (r *PlatformFeeRepository) Totals(ctx context.Context) (exchangeTotal, withdrawalTotal float64, err error) {
+func (r *PlatformFeeRepository) Totals(ctx context.Context) (exchangeTotal, withdrawalTotal decimal.Decimal, err error) {
 	err = r.db.QueryRowContext(ctx, queries.PlatformFeeTotalsQuery).Scan(&exchangeTotal, &withdrawalTotal)
 	return
 }

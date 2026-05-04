@@ -101,8 +101,6 @@ func (s *AuthService) Register(ctx context.Context, req *models.RegisterRequest)
 			wallet := &domain.Wallet{
 				UserID:     user.ID,
 				CurrencyID: currency.ID,
-				Balance:    0,
-				Locked:     0,
 			}
 			if err := s.walletRepo.Create(ctx, wallet); err != nil {
 				s.logger.Error("failed to create wallet during registration", "user_id", user.ID, "currency_id", currency.ID, "error", err)

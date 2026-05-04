@@ -1,22 +1,24 @@
 package models
 
+import "github.com/shopspring/decimal"
+
 type DepositRequest struct {
-	CurrencyCode string  `json:"currency_code" validate:"required"`
-	Amount       float64 `json:"amount" validate:"required,gt=0"`
-	TxHash       *string `json:"tx_hash"`
+	CurrencyCode string          `json:"currency_code" validate:"required"`
+	Amount       decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	TxHash       *string         `json:"tx_hash"`
 }
 
 type WithdrawRequest struct {
-	CurrencyCode string  `json:"currency_code" validate:"required"`
-	Amount       float64 `json:"amount" validate:"required,gt=0"`
-	ToAddress    string  `json:"to_address"`   // blockchain address for crypto withdrawals
-	ActionToken  string  `json:"action_token" validate:"required"` // single-use 2FA action token
+	CurrencyCode string          `json:"currency_code" validate:"required"`
+	Amount       decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	ToAddress    string          `json:"to_address"`   // blockchain address for crypto withdrawals
+	ActionToken  string          `json:"action_token" validate:"required"` // single-use 2FA action token
 }
 
 type AdminDepositRequest struct {
-	UserID       int64   `json:"user_id" validate:"required,gt=0"`
-	CurrencyCode string  `json:"currency_code" validate:"required"`
-	Amount       float64 `json:"amount" validate:"required,gt=0"`
-	TxHash       *string `json:"tx_hash"`
-	Description  string  `json:"description"`
+	UserID       int64           `json:"user_id" validate:"required,gt=0"`
+	CurrencyCode string          `json:"currency_code" validate:"required"`
+	Amount       decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	TxHash       *string         `json:"tx_hash"`
+	Description  string          `json:"description"`
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/pkg/cache"
 	"github.com/caspianex/exchange-backend/pkg/database"
+	"github.com/shopspring/decimal"
 )
 
 type ExchangeRateRepository struct {
@@ -152,7 +153,7 @@ func (r *ExchangeRateRepository) Delete(ctx context.Context, id int64) error {
 // RateUpdateData holds data for batch updating rates (worker updates only rate, not fee)
 type RateUpdateData struct {
 	ID   int64
-	Rate float64
+	Rate decimal.Decimal
 }
 
 // BatchUpdate updates multiple exchange rates in a single transaction

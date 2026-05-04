@@ -7,6 +7,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/internal/models"
 	"github.com/caspianex/exchange-backend/internal/repository"
+	"github.com/shopspring/decimal"
 )
 
 type WalletService struct {
@@ -82,14 +83,14 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 	_, isCrypto := domain.CurrencyChainFor(req.CurrencyCode)
 	isCryptoOnChain := isCrypto && s.cgService != nil && req.ToAddress != ""
 
-	var fee float64
+	var fee decimal.Decimal
 	if !isCryptoOnChain {
-		fee = req.Amount * 0.001
+		fee = req.Amount.Mul(decimal.RequireFromString("0.001"))
 	}
 
 	// AtomicDeduct checks balance and deducts in a single SQL UPDATE … WHERE balance >= $1.
 	// No separate read-then-check needed — eliminates the double-spend race condition.
-	if err := s.walletRepo.AtomicDeduct(ctx, wallet.ID, req.Amount+fee); err != nil {
+	if err := s.walletRepo.AtomicDeduct(ctx, wallet.ID, req.Amount.Add(fee)); err != nil {
 		return nil, err // "insufficient balance" returned by the repo on failure
 	}
 
@@ -109,7 +110,7 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 
 	if err := s.txRepo.Create(ctx, tx); err != nil {
 		// Balance already deducted — refund before surfacing the error.
-		if cErr := s.walletRepo.AtomicCredit(ctx, wallet.ID, req.Amount+fee); cErr != nil {
+		if cErr := s.walletRepo.AtomicCredit(ctx, wallet.ID, req.Amount.Add(fee)); cErr != nil {
 			return nil, fmt.Errorf("failed to create transaction (%w) and refund also failed (%v) — MANUAL INTERVENTION REQUIRED", err, cErr)
 		}
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
@@ -129,7 +130,7 @@ func (s *WalletService) Withdraw(ctx context.Context, userID int64, req *models.
 
 	// Record withdrawal fee in platform ledger (fire-and-forget).
 	// Crypto on-chain withdrawals carry no platform fee (fee == 0), so this is fiat-only in practice.
-	if fee > 0 {
+	if fee.IsPositive() {
 		s.feeService.Record(userID, domain.FeeOperationWithdrawal, currency.ID, req.Amount, fee)
 	}
 

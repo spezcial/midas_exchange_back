@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/caspianex/exchange-backend/internal/domain"
+	"github.com/shopspring/decimal"
 )
 
 // ---------- mock implementations ----------
@@ -80,7 +81,7 @@ func (m *mockOTCRepo) UpdateOfferStatus(_ context.Context, _ int64, _ domain.OTC
 	}
 	return m.msgErr
 }
-func (m *mockOTCRepo) Agree(_ context.Context, _ int64, _, _, _ float64, _ time.Time) error {
+func (m *mockOTCRepo) Agree(_ context.Context, _ int64, _, _, _ decimal.Decimal, _ time.Time) error {
 	m.agreeCalled = true
 	return m.orderErr
 }
@@ -92,7 +93,7 @@ func (m *mockOTCRepo) SetPaymentReceived(_ context.Context, _ int64) error {
 	m.setPaymentRecvCalled = true
 	return m.orderErr
 }
-func (m *mockOTCRepo) CompleteOrderAtomic(_ context.Context, _, _, _, _ int64, _, _, _ float64, _ string) error {
+func (m *mockOTCRepo) CompleteOrderAtomic(_ context.Context, _, _, _, _ int64, _, _, _ decimal.Decimal, _ string) error {
 	m.completeAtomicCalled = true
 	if m.completeAtomicErr != nil {
 		return m.completeAtomicErr
@@ -112,7 +113,7 @@ func (m *mockOTCRepo) GetConfigByID(_ context.Context, _ int64) (*domain.OTCConf
 }
 func (m *mockOTCRepo) GetConfigByPair(_ context.Context, _, _ int64) (*domain.OTCConfig, error) {
 	// Return a permissive config by default so existing tests are unaffected
-	return &domain.OTCConfig{IsActive: true, MinFromAmount: 0}, nil
+	return &domain.OTCConfig{IsActive: true, MinFromAmount: decimal.Zero}, nil
 }
 func (m *mockOTCRepo) GetActiveConfigsWithCurrencies(_ context.Context) ([]domain.OTCConfigWithCurrencies, error) {
 	return nil, nil
@@ -147,24 +148,24 @@ type mockWalletRepo struct {
 
 type updateCall struct {
 	walletID int64
-	balance  float64
-	locked   float64
+	balance  decimal.Decimal
+	locked   decimal.Decimal
 }
 
 type lockCall struct {
 	walletID int64
-	amount   float64
+	amount   decimal.Decimal
 }
 
 type unlockCall struct {
 	walletID int64
-	amount   float64
+	amount   decimal.Decimal
 }
 
 type finalizeCall struct {
 	walletID         int64
-	fromAmount       float64
-	agreedFromAmount float64
+	fromAmount       decimal.Decimal
+	agreedFromAmount decimal.Decimal
 }
 
 func newMockWalletRepo() *mockWalletRepo {
@@ -191,71 +192,39 @@ func (m *mockWalletRepo) GetByUserAndCurrency(_ context.Context, userID int64, c
 	return &cp, nil
 }
 
-func (m *mockWalletRepo) UpdateBalance(_ context.Context, walletID int64, balance, locked float64) error {
-	m.updateCalls = append(m.updateCalls, updateCall{walletID, balance, locked})
-	if err, ok := m.updateErr[walletID]; ok {
-		return err
-	}
-	for _, w := range m.wallets {
-		if w.ID == walletID {
-			w.Balance = balance
-			w.Locked = locked
-		}
-	}
-	return nil
-}
-
-func (m *mockWalletRepo) LockAmount(_ context.Context, walletID int64, amount float64) error {
+func (m *mockWalletRepo) LockAmount(_ context.Context, walletID int64, amount decimal.Decimal) error {
 	m.lockCalls = append(m.lockCalls, lockCall{walletID, amount})
 	if err, ok := m.lockErr[walletID]; ok {
 		return err
 	}
 	for _, w := range m.wallets {
 		if w.ID == walletID {
-			if w.Balance < amount {
+			if w.Balance.LessThan(amount) {
 				return errors.New("insufficient balance")
 			}
-			w.Balance -= amount
-			w.Locked += amount
+			w.Balance = w.Balance.Sub(amount)
+			w.Locked = w.Locked.Add(amount)
 			return nil
 		}
 	}
 	return errors.New("wallet not found")
 }
 
-func (m *mockWalletRepo) UnlockAmount(_ context.Context, walletID int64, amount float64) error {
+func (m *mockWalletRepo) UnlockAmount(_ context.Context, walletID int64, amount decimal.Decimal) error {
 	m.unlockCalls = append(m.unlockCalls, unlockCall{walletID, amount})
 	if err, ok := m.unlockErr[walletID]; ok {
 		return err
 	}
 	for _, w := range m.wallets {
 		if w.ID == walletID {
-			if w.Locked >= amount {
-				w.Locked -= amount
-				w.Balance += amount
+			if !w.Locked.LessThan(amount) {
+				w.Locked = w.Locked.Sub(amount)
+				w.Balance = w.Balance.Add(amount)
 			}
 			return nil
 		}
 	}
 	return nil // best-effort
-}
-
-func (m *mockWalletRepo) FinalizeFromLocked(_ context.Context, walletID int64, fromAmount, agreedFromAmount float64) error {
-	m.finalizeCalls = append(m.finalizeCalls, finalizeCall{walletID, fromAmount, agreedFromAmount})
-	if err, ok := m.finalizeErr[walletID]; ok {
-		return err
-	}
-	for _, w := range m.wallets {
-		if w.ID == walletID {
-			if w.Locked < fromAmount {
-				return errors.New("insufficient locked balance or funds cannot cover agreed amount")
-			}
-			w.Locked -= fromAmount
-			w.Balance += (fromAmount - agreedFromAmount)
-			return nil
-		}
-	}
-	return errors.New("wallet not found")
 }
 
 func (m *mockWalletRepo) RefreshWalletCache(_ context.Context, _ int64) error { return nil }
@@ -297,6 +266,8 @@ func (m *selectiveTxRepo) Create(_ context.Context, tx *domain.Transaction) erro
 
 func ptr[T any](v T) *T { return &v }
 
+func dec(f float64) decimal.Decimal { return decimal.NewFromFloat(f) }
+
 func makeOTCService(otcRepo *mockOTCRepo, userRepo *mockUserRepo, walletRepo *mockWalletRepo) *OTCService {
 	return &OTCService{
 		otcRepo:    otcRepo,
@@ -307,8 +278,9 @@ func makeOTCService(otcRepo *mockOTCRepo, userRepo *mockUserRepo, walletRepo *mo
 }
 
 func paymentReceivedOrder(operatorID int64) *domain.OTCOrderDetail {
-	agreedFrom := 1000.0
-	toAmt := 50.0
+	agreedFrom := dec(1000.0)
+	toAmt := dec(50.0)
+	proposedRate := dec(0.05)
 	return &domain.OTCOrderDetail{
 		OTCOrder: domain.OTCOrder{
 			ID:               1,
@@ -317,9 +289,9 @@ func paymentReceivedOrder(operatorID int64) *domain.OTCOrderDetail {
 			OperatorID:       ptr(operatorID),
 			FromCurrencyID:   1,
 			ToCurrencyID:     2,
-			FromAmount:       1000.0,
-			ProposedRate:     0.05,
-			AgreedRate:       ptr(0.05),
+			FromAmount:       dec(1000.0),
+			ProposedRate:     dec(0.05),
+			AgreedRate:       &proposedRate,
 			AgreedFromAmount: &agreedFrom,
 			ToAmount:         &toAmt,
 			Status:           domain.OTCStatusPaymentReceived,
@@ -335,8 +307,8 @@ func TestCompleteOrder_HappyPath(t *testing.T) {
 
 	otcRepo := &mockOTCRepo{order: order}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, UserID: order.UserID, CurrencyID: 1, Balance: 2000.0, Locked: 1000.0})
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, UserID: order.UserID, CurrencyID: 2, Balance: 10.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, UserID: order.UserID, CurrencyID: 1, Balance: dec(2000.0), Locked: dec(1000.0)})
+	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, UserID: order.UserID, CurrencyID: 2, Balance: dec(10.0)})
 
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
 	if err := svc.CompleteOrder(context.Background(), "abc", operatorID); err != nil {
@@ -355,8 +327,8 @@ func TestCompleteOrder_AtomicFails(t *testing.T) {
 
 	otcRepo := &mockOTCRepo{order: order, completeAtomicErr: errors.New("db error")}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0, Locked: 1000.0})
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: dec(2000.0), Locked: dec(1000.0)})
+	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: dec(10.0)})
 
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
 	if err := svc.CompleteOrder(context.Background(), "abc", operatorID); err == nil {
@@ -415,7 +387,7 @@ func TestCompleteOrder_FromWalletNotFound(t *testing.T) {
 
 	wallets := newMockWalletRepo()
 	// from-wallet not registered — only to-wallet exists
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
+	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: dec(10.0)})
 
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, wallets)
 	err := svc.CompleteOrder(context.Background(), "abc", operatorID)
@@ -429,7 +401,7 @@ func TestCompleteOrder_ToWalletNotFound(t *testing.T) {
 	order := paymentReceivedOrder(operatorID)
 
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 2000.0, Locked: 1000.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: dec(2000.0), Locked: dec(1000.0)})
 	// to-wallet not registered
 
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, wallets)
@@ -446,8 +418,8 @@ func TestCompleteOrder_InsufficientBalance(t *testing.T) {
 	// Simulate the atomic method failing due to insufficient locked balance.
 	otcRepo := &mockOTCRepo{order: order, completeAtomicErr: errors.New("insufficient locked balance")}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: 500.0, Locked: 0})
-	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: 10.0})
+	wallets.setWallet(order.UserID, int32(order.FromCurrencyID), &domain.Wallet{ID: 1, Balance: dec(500.0), Locked: decimal.Zero})
+	wallets.setWallet(order.UserID, int32(order.ToCurrencyID), &domain.Wallet{ID: 2, Balance: dec(10.0)})
 
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
 	err := svc.CompleteOrder(context.Background(), "abc", operatorID)
@@ -476,7 +448,7 @@ func TestCreateOrder_KYCTooLow(t *testing.T) {
 		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 1}},
 		newMockWalletRepo(),
 	)
-	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, dec(500), dec(0.05), nil)
 	if err == nil || err.Error() != "KYC level 2 or higher required to create an OTC order" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -485,14 +457,14 @@ func TestCreateOrder_KYCTooLow(t *testing.T) {
 func TestCreateOrder_KYCSufficient(t *testing.T) {
 	otcRepo := &mockOTCRepo{}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 10000.0})
-	wallets.setWallet(1, 2, &domain.Wallet{ID: 2, Balance: 0})
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: dec(10000.0)})
+	wallets.setWallet(1, 2, &domain.Wallet{ID: 2, Balance: decimal.Zero})
 	svc := makeOTCService(
 		otcRepo,
 		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2, Email: "a@b.com"}},
 		wallets,
 	)
-	order, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	order, err := svc.CreateOrder(context.Background(), 1, 1, 2, dec(500), dec(0.05), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -513,7 +485,7 @@ func TestCreateOrder_UserNotFound(t *testing.T) {
 		&mockUserRepo{userErr: errors.New("user not found")},
 		newMockWalletRepo(),
 	)
-	_, err := svc.CreateOrder(context.Background(), 99, 1, 2, 500, 0.05, nil)
+	_, err := svc.CreateOrder(context.Background(), 99, 1, 2, dec(500), dec(0.05), nil)
 	if err == nil {
 		t.Error("expected error when user not found")
 	}
@@ -521,13 +493,13 @@ func TestCreateOrder_UserNotFound(t *testing.T) {
 
 func TestCreateOrder_InsufficientBalanceForLock(t *testing.T) {
 	wallets := newMockWalletRepo()
-	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 10.0}) // not enough
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: dec(10.0)}) // not enough
 	svc := makeOTCService(
 		&mockOTCRepo{},
 		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2}},
 		wallets,
 	)
-	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, dec(500), dec(0.05), nil)
 	if err == nil || err.Error() != "insufficient balance to place OTC order" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -535,14 +507,14 @@ func TestCreateOrder_InsufficientBalanceForLock(t *testing.T) {
 
 func TestCreateOrder_LockFails(t *testing.T) {
 	wallets := newMockWalletRepo()
-	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: 1000.0})
+	wallets.setWallet(1, 1, &domain.Wallet{ID: 1, Balance: dec(1000.0)})
 	wallets.lockErr[1] = errors.New("db lock error")
 	svc := makeOTCService(
 		&mockOTCRepo{},
 		&mockUserRepo{user: &domain.User{ID: 1, KycLevel: 2}},
 		wallets,
 	)
-	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, 500, 0.05, nil)
+	_, err := svc.CreateOrder(context.Background(), 1, 1, 2, dec(500), dec(0.05), nil)
 	if err == nil {
 		t.Error("expected error when lock fails")
 	}
@@ -575,14 +547,17 @@ func TestTakeOrder_Success(t *testing.T) {
 
 func TestAcceptOffer_CannotAcceptOwnOffer(t *testing.T) {
 	offerStatus := domain.OTCOfferStatusPending
+	rate := dec(0.05)
+	to := dec(50.0)
+	from := dec(1000.0)
 	msg := &domain.OTCMessage{
 		ID:              1,
 		OrderID:         1,
 		SenderID:        42,
 		MessageType:     domain.OTCMessageTypeOffer,
-		OfferRate:       ptr(0.05),
-		OfferToAmount:   ptr(50.0),
-		OfferFromAmount: ptr(1000.0),
+		OfferRate:       &rate,
+		OfferToAmount:   &to,
+		OfferFromAmount: &from,
 		OfferStatus:     &offerStatus,
 	}
 	order := &domain.OTCOrderDetail{OTCOrder: domain.OTCOrder{ID: 1, Status: domain.OTCStatusNegotiating}}
@@ -616,9 +591,9 @@ func TestAcceptOffer_AlreadyNotPending(t *testing.T) {
 
 func makeOffer(orderID, senderID int64) *domain.OTCMessage {
 	status := domain.OTCOfferStatusPending
-	rate := 0.05
-	from := 1000.0
-	to := 50.0
+	rate := dec(0.05)
+	from := dec(1000.0)
+	to := dec(50.0)
 	return &domain.OTCMessage{
 		ID:              1,
 		OrderID:         orderID,
@@ -749,12 +724,12 @@ func TestCancelOrder_UnlocksWallet(t *testing.T) {
 			UserID:         10,
 			FromCurrencyID: 1,
 			ToCurrencyID:   2,
-			FromAmount:     500.0,
+			FromAmount:     dec(500.0),
 			Status:         domain.OTCStatusNegotiating,
 		},
 	}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: 500.0, Balance: 0})
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: dec(500.0), Balance: decimal.Zero})
 
 	otcRepo := &mockOTCRepo{order: order}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
@@ -766,7 +741,7 @@ func TestCancelOrder_UnlocksWallet(t *testing.T) {
 	if len(wallets.unlockCalls) != 1 {
 		t.Fatalf("expected 1 UnlockAmount call, got %d", len(wallets.unlockCalls))
 	}
-	if wallets.unlockCalls[0].walletID != 5 || wallets.unlockCalls[0].amount != 500.0 {
+	if wallets.unlockCalls[0].walletID != 5 || !wallets.unlockCalls[0].amount.Equal(dec(500.0)) {
 		t.Errorf("unexpected unlock call: %+v", wallets.unlockCalls[0])
 	}
 }
@@ -807,8 +782,8 @@ func TestAcceptAsProposed_Success(t *testing.T) {
 		ID:           1,
 		OperatorID:   ptr(operatorID),
 		Status:       domain.OTCStatusNegotiating,
-		FromAmount:   1000.0,
-		ProposedRate: 0.05,
+		FromAmount:   dec(1000.0),
+		ProposedRate: dec(0.05),
 	}}
 	otcRepo := &mockOTCRepo{order: order}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
@@ -935,14 +910,14 @@ func TestSendOffer_Success(t *testing.T) {
 	}}
 	otcRepo := &mockOTCRepo{order: order}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, newMockWalletRepo())
-	msg, err := svc.SendOffer(context.Background(), "abc", operatorID, "operator", 0.05, 1000.0)
+	msg, err := svc.SendOffer(context.Background(), "abc", operatorID, "operator", dec(0.05), dec(1000.0))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg == nil || msg.OfferRate == nil || *msg.OfferRate != 0.05 {
+	if msg == nil || msg.OfferRate == nil || !msg.OfferRate.Equal(dec(0.05)) {
 		t.Error("expected offer message with correct rate")
 	}
-	if msg.OfferToAmount == nil || *msg.OfferToAmount != 50.0 {
+	if msg.OfferToAmount == nil || !msg.OfferToAmount.Equal(dec(50.0)) {
 		t.Errorf("expected to_amount=50, got %v", msg.OfferToAmount)
 	}
 }
@@ -954,7 +929,7 @@ func TestSendOffer_WrongStatus(t *testing.T) {
 		Status: domain.OTCStatusAwaitingPayment,
 	}}
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
-	_, err := svc.SendOffer(context.Background(), "abc", 10, "client", 0.05, 1000.0)
+	_, err := svc.SendOffer(context.Background(), "abc", 10, "client", dec(0.05), dec(1000.0))
 	if err == nil || err.Error() != "offers can only be sent while order is negotiating" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -967,7 +942,7 @@ func TestSendOffer_NotParticipant(t *testing.T) {
 		Status: domain.OTCStatusNegotiating,
 	}}
 	svc := makeOTCService(&mockOTCRepo{order: order}, &mockUserRepo{}, newMockWalletRepo())
-	_, err := svc.SendOffer(context.Background(), "abc", 99, "client", 0.05, 1000.0)
+	_, err := svc.SendOffer(context.Background(), "abc", 99, "client", dec(0.05), dec(1000.0))
 	if err == nil || err.Error() != "not authorized to send offers on this order" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1054,12 +1029,12 @@ func TestGetOrder_LazyExpiry_UnlocksWallet(t *testing.T) {
 			UserID:         10,
 			Status:         domain.OTCStatusAwaitingPayment,
 			FromCurrencyID: 1,
-			FromAmount:     500.0,
+			FromAmount:     dec(500.0),
 			PaymentDeadline: &deadline,
 		},
 	}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: 0, Locked: 500.0})
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: decimal.Zero, Locked: dec(500.0)})
 
 	otcRepo := &mockOTCRepo{order: order, expireResult: true}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
@@ -1074,7 +1049,7 @@ func TestGetOrder_LazyExpiry_UnlocksWallet(t *testing.T) {
 	if !otcRepo.expireCalled {
 		t.Error("expected Expire to be called")
 	}
-	if len(wallets.unlockCalls) != 1 || wallets.unlockCalls[0].amount != 500.0 {
+	if len(wallets.unlockCalls) != 1 || !wallets.unlockCalls[0].amount.Equal(dec(500.0)) {
 		t.Errorf("expected wallet unlock of 500, got %+v", wallets.unlockCalls)
 	}
 }
@@ -1088,12 +1063,12 @@ func TestGetOrder_LazyExpiry_AlreadyExpiredByOther(t *testing.T) {
 			UserID:          10,
 			Status:          domain.OTCStatusAwaitingPayment,
 			FromCurrencyID:  1,
-			FromAmount:      500.0,
+			FromAmount:      dec(500.0),
 			PaymentDeadline: &deadline,
 		},
 	}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: 0, Locked: 0})
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Balance: decimal.Zero, Locked: decimal.Zero})
 
 	otcRepo := &mockOTCRepo{order: order, expireResult: false}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
@@ -1177,12 +1152,12 @@ func TestCancelOrder_OperatorCanCancelAwaitingPayment(t *testing.T) {
 			ID:             1,
 			UserID:         10,
 			FromCurrencyID: 1,
-			FromAmount:     1000.0,
+			FromAmount:     dec(1000.0),
 			Status:         domain.OTCStatusAwaitingPayment,
 		},
 	}
 	wallets := newMockWalletRepo()
-	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: 1000.0})
+	wallets.setWallet(10, 1, &domain.Wallet{ID: 5, Locked: dec(1000.0)})
 
 	otcRepo := &mockOTCRepo{order: order}
 	svc := makeOTCService(otcRepo, &mockUserRepo{}, wallets)
@@ -1199,7 +1174,7 @@ func TestCancelOrder_OperatorCanCancelAwaitingPayment(t *testing.T) {
 
 func TestCreateConfig_SameCurrencyError(t *testing.T) {
 	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
-	_, err := svc.CreateConfig(context.Background(), 1, 1, 100, 30, true)
+	_, err := svc.CreateConfig(context.Background(), 1, 1, dec(100), 30, true)
 	if err == nil || err.Error() != "from_currency_id and to_currency_id must differ" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1207,7 +1182,7 @@ func TestCreateConfig_SameCurrencyError(t *testing.T) {
 
 func TestCreateConfig_NegativeMinAmount(t *testing.T) {
 	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
-	_, err := svc.CreateConfig(context.Background(), 1, 2, -10, 30, true)
+	_, err := svc.CreateConfig(context.Background(), 1, 2, dec(-10), 30, true)
 	if err == nil || err.Error() != "min_from_amount must be non-negative" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1215,7 +1190,7 @@ func TestCreateConfig_NegativeMinAmount(t *testing.T) {
 
 func TestCreateConfig_ZeroTimeout(t *testing.T) {
 	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
-	_, err := svc.CreateConfig(context.Background(), 1, 2, 100, 0, true)
+	_, err := svc.CreateConfig(context.Background(), 1, 2, dec(100), 0, true)
 	if err == nil || err.Error() != "payment_timeout_min must be positive" {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1223,11 +1198,11 @@ func TestCreateConfig_ZeroTimeout(t *testing.T) {
 
 func TestCreateConfig_Success(t *testing.T) {
 	svc := makeOTCService(&mockOTCRepo{}, &mockUserRepo{}, newMockWalletRepo())
-	cfg, err := svc.CreateConfig(context.Background(), 1, 2, 500.0, 30, true)
+	cfg, err := svc.CreateConfig(context.Background(), 1, 2, dec(500.0), 30, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg == nil || cfg.MinFromAmount != 500.0 {
+	if cfg == nil || !cfg.MinFromAmount.Equal(dec(500.0)) {
 		t.Error("expected config with min_from_amount=500")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 	"github.com/caspianex/exchange-backend/pkg/cryptogate"
 	"github.com/caspianex/exchange-backend/pkg/logger"
+	"github.com/shopspring/decimal"
 )
 
 // ErrUnsupportedCurrency is returned when the requested currency has no crypto-gate chain mapping.
@@ -204,7 +205,7 @@ func (s *CryptoGateService) InitiateWithdrawal(
 		return fmt.Errorf("%w: %s", ErrUnsupportedCurrency, currencyCode)
 	}
 
-	amountStr := strconv.FormatFloat(tx.Amount, 'f', -1, 64)
+	amountStr := tx.Amount.String()
 	txHash, err := s.client.Withdraw(ctx, cryptogate.WithdrawRequest{
 		UUID:     strconv.FormatInt(tx.ID, 10),
 		Address:  toAddress,
@@ -219,9 +220,9 @@ func (s *CryptoGateService) InitiateWithdrawal(
 			s.log.Error("InitiateWithdrawal: failed to mark tx failed", "tx_id", tx.ID, "error", uErr)
 		}
 		// Refund atomically — no read-modify-write.
-		if cErr := s.walletRepo.AtomicCredit(ctx, tx.WalletID, tx.Amount+tx.Fee); cErr != nil {
+		if cErr := s.walletRepo.AtomicCredit(ctx, tx.WalletID, tx.Amount.Add(tx.Fee)); cErr != nil {
 			s.log.Error("InitiateWithdrawal: refund failed — MANUAL INTERVENTION REQUIRED",
-				"tx_id", tx.ID, "wallet_id", tx.WalletID, "amount", tx.Amount+tx.Fee, "error", cErr)
+				"tx_id", tx.ID, "wallet_id", tx.WalletID, "amount", tx.Amount.Add(tx.Fee), "error", cErr)
 		}
 		return fmt.Errorf("crypto-gate withdrawal failed: %w", err)
 	}
@@ -266,8 +267,8 @@ func (s *CryptoGateService) HandleDepositWebhook(ctx context.Context, payload do
 	}
 
 	// Parse the amount — the gateway sends it as a decimal string, e.g. "100.000000000".
-	amount, err := strconv.ParseFloat(payload.Amount, 64)
-	if err != nil || amount <= 0 {
+	amount, err := decimal.NewFromString(payload.Amount)
+	if err != nil || !amount.IsPositive() {
 		return fmt.Errorf("deposit webhook: invalid amount %q: %w", payload.Amount, err)
 	}
 
@@ -345,10 +346,10 @@ func (s *CryptoGateService) HandleWithdrawWebhook(ctx context.Context, payload d
 			return fmt.Errorf("withdraw webhook: mark transaction failed: %w", err)
 		}
 		// Refund atomically — no read-modify-write.
-		if err := s.walletRepo.AtomicCredit(ctx, tx.WalletID, tx.Amount+tx.Fee); err != nil {
+		if err := s.walletRepo.AtomicCredit(ctx, tx.WalletID, tx.Amount.Add(tx.Fee)); err != nil {
 			// Do NOT return nil here — that would ack the webhook and forfeit retries.
 			return fmt.Errorf("withdraw webhook: refund credit failed — MANUAL INTERVENTION REQUIRED: tx_id=%d wallet_id=%d amount=%v: %w",
-				txID, tx.WalletID, tx.Amount+tx.Fee, err)
+				txID, tx.WalletID, tx.Amount.Add(tx.Fee), err)
 		}
 		s.log.Info("withdrawal failed — balance refunded", "tx_id", txID)
 

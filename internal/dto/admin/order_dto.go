@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/caspianex/exchange-backend/internal/domain"
+	"github.com/shopspring/decimal"
 )
 
 // ExchangeDTO represents a currency exchange with all details for admin view
@@ -16,11 +17,11 @@ type ExchangeDTO struct {
 	ToCurrencyID    int32                         `json:"to_currency_id"`
 	FromCurrency    CurrencyDTO                   `json:"from_currency"`
 	ToCurrency      CurrencyDTO                   `json:"to_currency"`
-	FromAmount      float64                       `json:"from_amount"`
-	ToAmount        float64                       `json:"to_amount"`
-	ToAmountWithFee float64                       `json:"to_amount_with_fee"`
-	ExchangeRate    float64                       `json:"exchange_rate"`
-	Fee             float64                       `json:"fee"`
+	FromAmount      decimal.Decimal               `json:"from_amount"`
+	ToAmount        decimal.Decimal               `json:"to_amount"`
+	ToAmountWithFee decimal.Decimal               `json:"to_amount_with_fee"`
+	ExchangeRate    decimal.Decimal               `json:"exchange_rate"`
+	Fee             decimal.Decimal               `json:"fee"`
 	Status          domain.CurrencyExchangeStatus `json:"status"`
 	CreatedAt       time.Time                     `json:"created_at"`
 	UpdatedAt       time.Time                     `json:"updated_at"`

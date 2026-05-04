@@ -10,6 +10,7 @@ import (
 
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/internal/repository"
+	"github.com/shopspring/decimal"
 )
 
 // OTCBroadcaster pushes new chat messages to connected WebSocket clients.
@@ -38,10 +39,10 @@ type otcOrderRepo interface {
 	GetMessageByID(ctx context.Context, msgID int64) (*domain.OTCMessage, error)
 	UpdateOfferStatus(ctx context.Context, msgID int64, status domain.OTCOfferStatus) error
 	MarkMessagesRead(ctx context.Context, orderID, readerID int64) error
-	Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt float64, deadline time.Time) error
+	Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt decimal.Decimal, deadline time.Time) error
 	Cancel(ctx context.Context, orderID int64, reason, cancelledBy string) error
 	SetPaymentReceived(ctx context.Context, orderID int64) error
-	CompleteOrderAtomic(ctx context.Context, orderID, fromWalletID, toWalletID, userID int64, fromAmount, agreedFromAmount, toAmount float64, orderUID string) error
+	CompleteOrderAtomic(ctx context.Context, orderID, fromWalletID, toWalletID, userID int64, fromAmount, agreedFromAmount, toAmount decimal.Decimal, orderUID string) error
 	Expire(ctx context.Context, orderID int64) (bool, error)
 	CreateAuditLog(ctx context.Context, entry *domain.OTCAuditLog) error
 	GetAuditLogs(ctx context.Context, orderID int64) ([]domain.OTCAuditLog, error)
@@ -56,8 +57,8 @@ type otcUserRepo interface {
 // otcWalletRepo is the subset of WalletRepository used by OTCService.
 type otcWalletRepo interface {
 	GetByUserAndCurrency(ctx context.Context, userID int64, currencyID int32) (*domain.Wallet, error)
-	LockAmount(ctx context.Context, walletID int64, amount float64) error
-	UnlockAmount(ctx context.Context, walletID int64, amount float64) error
+	LockAmount(ctx context.Context, walletID int64, amount decimal.Decimal) error
+	UnlockAmount(ctx context.Context, walletID int64, amount decimal.Decimal) error
 	RefreshWalletCache(ctx context.Context, walletID int64) error
 }
 
@@ -90,7 +91,7 @@ func (s *OTCService) GetAllConfigsWithCurrencies(ctx context.Context) ([]domain.
 	return s.otcRepo.GetAllConfigsWithCurrencies(ctx)
 }
 
-func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrencyID, toCurrencyID int64, fromAmount, proposedRate float64, comment *string) (*domain.OTCOrder, error) {
+func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrencyID, toCurrencyID int64, fromAmount, proposedRate decimal.Decimal, comment *string) (*domain.OTCOrder, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -107,8 +108,8 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 	if cfg == nil || !cfg.IsActive {
 		return nil, fmt.Errorf("this currency pair is not available for OTC trading")
 	}
-	if fromAmount < cfg.MinFromAmount {
-		return nil, fmt.Errorf("minimum order amount for this pair is %.2f", cfg.MinFromAmount)
+	if fromAmount.LessThan(cfg.MinFromAmount) {
+		return nil, fmt.Errorf("minimum order amount for this pair is %s", cfg.MinFromAmount.StringFixed(2))
 	}
 
 	// Verify from-wallet exists and has sufficient balance before locking
@@ -116,7 +117,7 @@ func (s *OTCService) CreateOrder(ctx context.Context, userID int64, fromCurrency
 	if err != nil {
 		return nil, fmt.Errorf("from-wallet not found: %w", err)
 	}
-	if fromWallet.Balance < fromAmount {
+	if fromWallet.Balance.LessThan(fromAmount) {
 		return nil, fmt.Errorf("insufficient balance to place OTC order")
 	}
 
@@ -253,15 +254,15 @@ func (s *OTCService) ExportOrdersCSV(ctx context.Context, filter domain.OTCListF
 		}
 		agreedRate := ""
 		if r.AgreedRate != nil {
-			agreedRate = fmt.Sprintf("%.8f", *r.AgreedRate)
+			agreedRate = r.AgreedRate.StringFixed(8)
 		}
 		agreedFromAmount := ""
 		if r.AgreedFromAmount != nil {
-			agreedFromAmount = fmt.Sprintf("%.8f", *r.AgreedFromAmount)
+			agreedFromAmount = r.AgreedFromAmount.StringFixed(8)
 		}
 		toAmount := ""
 		if r.ToAmount != nil {
-			toAmount = fmt.Sprintf("%.8f", *r.ToAmount)
+			toAmount = r.ToAmount.StringFixed(8)
 		}
 		cancelReason := ""
 		if r.CancelReason != nil {
@@ -274,8 +275,8 @@ func (s *OTCService) ExportOrdersCSV(ctx context.Context, filter domain.OTCListF
 			operatorEmail,
 			r.FromCurrencyCode,
 			r.ToCurrencyCode,
-			fmt.Sprintf("%.8f", r.FromAmount),
-			fmt.Sprintf("%.8f", r.ProposedRate),
+			r.FromAmount.StringFixed(8),
+			r.ProposedRate.StringFixed(8),
 			agreedRate,
 			agreedFromAmount,
 			toAmount,
@@ -323,7 +324,7 @@ func (s *OTCService) AcceptAsProposed(ctx context.Context, uid string, operatorI
 		return fmt.Errorf("only the assigned operator can accept the proposed rate")
 	}
 
-	toAmount := order.FromAmount * order.ProposedRate
+	toAmount := order.FromAmount.Mul(order.ProposedRate)
 	deadline := time.Now().Add(30 * time.Minute)
 	if err := s.otcRepo.Agree(ctx, order.ID, order.ProposedRate, order.FromAmount, toAmount, deadline); err != nil {
 		return err
@@ -358,7 +359,7 @@ func (s *OTCService) SendMessage(ctx context.Context, uid string, senderID int64
 	return msg, nil
 }
 
-func (s *OTCService) SendOffer(ctx context.Context, uid string, senderID int64, senderRole string, offerRate, offerFromAmount float64) (*domain.OTCMessage, error) {
+func (s *OTCService) SendOffer(ctx context.Context, uid string, senderID int64, senderRole string, offerRate, offerFromAmount decimal.Decimal) (*domain.OTCMessage, error) {
 	order, err := s.otcRepo.GetByUID(ctx, uid)
 	if err != nil {
 		return nil, err
@@ -370,7 +371,7 @@ func (s *OTCService) SendOffer(ctx context.Context, uid string, senderID int64, 
 		return nil, fmt.Errorf("not authorized to send offers on this order")
 	}
 
-	offerToAmount := offerFromAmount * offerRate
+	offerToAmount := offerFromAmount.Mul(offerRate)
 	offerStatus := domain.OTCOfferStatusPending
 
 	msg := &domain.OTCMessage{
@@ -570,11 +571,11 @@ func (s *OTCService) CompleteOrder(ctx context.Context, uid string, operatorID i
 
 // --- Config ---
 
-func (s *OTCService) CreateConfig(ctx context.Context, fromCurrencyID, toCurrencyID int64, minFromAmount float64, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
+func (s *OTCService) CreateConfig(ctx context.Context, fromCurrencyID, toCurrencyID int64, minFromAmount decimal.Decimal, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
 	if fromCurrencyID == toCurrencyID {
 		return nil, fmt.Errorf("from_currency_id and to_currency_id must differ")
 	}
-	if minFromAmount < 0 {
+	if minFromAmount.IsNegative() {
 		return nil, fmt.Errorf("min_from_amount must be non-negative")
 	}
 	if paymentTimeoutMin <= 0 {
@@ -593,12 +594,12 @@ func (s *OTCService) CreateConfig(ctx context.Context, fromCurrencyID, toCurrenc
 	return config, nil
 }
 
-func (s *OTCService) UpdateConfig(ctx context.Context, id int64, minFromAmount float64, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
+func (s *OTCService) UpdateConfig(ctx context.Context, id int64, minFromAmount decimal.Decimal, paymentTimeoutMin int, isActive bool) (*domain.OTCConfig, error) {
 	config, err := s.otcRepo.GetConfigByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if minFromAmount < 0 {
+	if minFromAmount.IsNegative() {
 		return nil, fmt.Errorf("min_from_amount must be non-negative")
 	}
 	if paymentTimeoutMin <= 0 {

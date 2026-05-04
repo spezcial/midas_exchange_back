@@ -169,8 +169,6 @@ func (s *OAuthService) HandleGoogleCallback(ctx context.Context, req *models.Goo
 			wallet := &domain.Wallet{
 				UserID:     user.ID,
 				CurrencyID: currency.ID,
-				Balance:    0,
-				Locked:     0,
 			}
 			s.walletRepo.Create(ctx, wallet)
 		}

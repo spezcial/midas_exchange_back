@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type TransactionType string
@@ -24,8 +26,8 @@ type Transaction struct {
 	UserID    int64             `db:"user_id" json:"user_id"`
 	WalletID  int64             `db:"wallet_id" json:"wallet_id"`
 	Type      TransactionType   `db:"type" json:"type"`
-	Amount    float64           `db:"amount" json:"amount"`
-	Fee       float64           `db:"fee" json:"fee"`
+	Amount    decimal.Decimal   `db:"amount" json:"amount"`
+	Fee       decimal.Decimal   `db:"fee" json:"fee"`
 	Status    TransactionStatus `db:"status" json:"status"`
 	TxHash    *string           `db:"tx_hash" json:"tx_hash,omitempty"`
 	CreatedAt time.Time         `db:"created_at" json:"created_at"`

@@ -15,6 +15,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 	"github.com/caspianex/exchange-backend/internal/service"
 	"github.com/caspianex/exchange-backend/pkg/logger"
+	"github.com/shopspring/decimal"
 )
 
 const BINANCE_API = `https://api.binance.com/api/v3/ticker/price?symbol=%s`
@@ -310,8 +311,8 @@ func (ru *RateUpdater) performUpdate(ctx context.Context) error {
 	failCount := 0
 
 	for _, rate := range rates {
-		// TODO: Handle fiat currencies
-		if rate.FromCurrency.IsCrypto || rate.ToCurrency.IsCrypto {
+		// Skip pure fiat pairs — Binance doesn't serve them. TODO: integrate a fiat rate source.
+		if !rate.FromCurrency.IsCrypto && !rate.ToCurrency.IsCrypto {
 			continue
 		}
 		// Fetch rate from Binance
@@ -328,7 +329,7 @@ func (ru *RateUpdater) performUpdate(ctx context.Context) error {
 
 		updates = append(updates, repository.RateUpdateData{
 			ID:   rate.ID,
-			Rate: newRate,
+			Rate: decimal.NewFromFloat(newRate),
 		})
 		successCount++
 

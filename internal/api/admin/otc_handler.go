@@ -11,6 +11,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/service"
 	"github.com/caspianex/exchange-backend/pkg/logger"
 	"github.com/go-chi/chi/v5"
+	"github.com/shopspring/decimal"
 )
 
 type AdminOTCHandler struct {
@@ -35,11 +36,11 @@ func (h *AdminOTCHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type createConfigRequest struct {
-	FromCurrencyID    int64   `json:"from_currency_id"`
-	ToCurrencyID      int64   `json:"to_currency_id"`
-	MinFromAmount     float64 `json:"min_from_amount"`
-	PaymentTimeoutMin int     `json:"payment_timeout_min"`
-	IsActive          bool    `json:"is_active"`
+	FromCurrencyID    int64           `json:"from_currency_id"`
+	ToCurrencyID      int64           `json:"to_currency_id"`
+	MinFromAmount     decimal.Decimal `json:"min_from_amount"`
+	PaymentTimeoutMin int             `json:"payment_timeout_min"`
+	IsActive          bool            `json:"is_active"`
 }
 
 func (h *AdminOTCHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +67,9 @@ func (h *AdminOTCHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateConfigRequest struct {
-	MinFromAmount     float64 `json:"min_from_amount"`
-	PaymentTimeoutMin int     `json:"payment_timeout_min"`
-	IsActive          bool    `json:"is_active"`
+	MinFromAmount     decimal.Decimal `json:"min_from_amount"`
+	PaymentTimeoutMin int             `json:"payment_timeout_min"`
+	IsActive          bool            `json:"is_active"`
 }
 
 func (h *AdminOTCHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
@@ -256,8 +257,8 @@ func (h *AdminOTCHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 type adminSendOfferRequest struct {
-	OfferRate       float64 `json:"offer_rate"`
-	OfferFromAmount float64 `json:"offer_from_amount"`
+	OfferRate       decimal.Decimal `json:"offer_rate"`
+	OfferFromAmount decimal.Decimal `json:"offer_from_amount"`
 }
 
 func (h *AdminOTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +276,7 @@ func (h *AdminOTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.OfferRate <= 0 || req.OfferFromAmount <= 0 {
+	if !req.OfferRate.IsPositive() || !req.OfferFromAmount.IsPositive() {
 		respondError(w, http.StatusBadRequest, "offer_rate and offer_from_amount must be positive")
 		return
 	}

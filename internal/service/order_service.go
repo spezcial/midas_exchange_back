@@ -9,6 +9,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/repository"
 	"github.com/caspianex/exchange-backend/pkg/email"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 type CurrencyExchangeService struct {
@@ -54,8 +55,9 @@ func (s *CurrencyExchangeService) CreateExchange(ctx context.Context, userID int
 	}
 
 	// Calculate amounts
-	toAmount := req.FromAmount * rate.Rate
-	toAmountWithFee := toAmount * (100 - rate.Fee) / 100
+	hundred := decimal.NewFromInt(100)
+	toAmount := req.FromAmount.Mul(rate.Rate)
+	toAmountWithFee := toAmount.Mul(hundred.Sub(rate.Fee)).Div(hundred)
 
 	// Get user's wallets
 	fromWallet, err := s.walletRepo.GetByUserAndCurrency(ctx, userID, fromCurrency.ID)
@@ -101,8 +103,8 @@ func (s *CurrencyExchangeService) CreateExchange(ctx context.Context, userID int
 	}
 
 	// Record exchange fee in platform ledger (fire-and-forget).
-	feeAmount := toAmount - toAmountWithFee
-	if feeAmount > 0 {
+	feeAmount := toAmount.Sub(toAmountWithFee)
+	if feeAmount.IsPositive() {
 		s.feeService.Record(userID, domain.FeeOperationExchange, toCurrency.ID, toAmount, feeAmount)
 	}
 

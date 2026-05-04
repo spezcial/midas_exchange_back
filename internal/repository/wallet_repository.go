@@ -10,6 +10,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/pkg/cache"
 	"github.com/caspianex/exchange-backend/pkg/database"
+	"github.com/shopspring/decimal"
 )
 
 type WalletRepository struct {
@@ -89,7 +90,7 @@ func (r *WalletRepository) GetUserWallets(ctx context.Context, userID int64) ([]
 	return wallets, nil
 }
 
-func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, balance, locked float64) error {
+func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, balance, locked decimal.Decimal) error {
 	// Get wallet first to know userID and currencyID for cache update
 	var wallet domain.Wallet
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
@@ -111,9 +112,9 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, walletID int64, ba
 
 // AtomicDeduct decrements balance by amount only if current balance >= amount.
 // Returns ErrInsufficientBalance if the balance check fails (prevents concurrent double-spend).
-func (r *WalletRepository) AtomicDeduct(ctx context.Context, walletID int64, amount float64) error {
+func (r *WalletRepository) AtomicDeduct(ctx context.Context, walletID int64, amount decimal.Decimal) error {
 	var updatedAt time.Time
-	var newBalance float64
+	var newBalance decimal.Decimal
 	err := r.db.QueryRowContext(ctx, queries.WalletDeductBalanceQuery, amount, walletID).Scan(&updatedAt, &newBalance)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("insufficient balance")
@@ -132,7 +133,7 @@ func (r *WalletRepository) AtomicDeduct(ctx context.Context, walletID int64, amo
 
 // LockAmount moves amount from balance to locked atomically.
 // Returns "insufficient balance" if balance < amount.
-func (r *WalletRepository) LockAmount(ctx context.Context, walletID int64, amount float64) error {
+func (r *WalletRepository) LockAmount(ctx context.Context, walletID int64, amount decimal.Decimal) error {
 	var wallet domain.Wallet
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
 		return err
@@ -145,8 +146,8 @@ func (r *WalletRepository) LockAmount(ctx context.Context, walletID int64, amoun
 	if err != nil {
 		return err
 	}
-	wallet.Balance -= amount
-	wallet.Locked += amount
+	wallet.Balance = wallet.Balance.Sub(amount)
+	wallet.Locked = wallet.Locked.Add(amount)
 	wallet.UpdatedAt = updatedAt
 	r.cacheService.SetWallet(&wallet)
 	return nil
@@ -154,7 +155,7 @@ func (r *WalletRepository) LockAmount(ctx context.Context, walletID int64, amoun
 
 // UnlockAmount moves amount from locked back to balance atomically.
 // Silently succeeds even if locked < amount (no-op via ErrNoRows) — callers treat it as best-effort.
-func (r *WalletRepository) UnlockAmount(ctx context.Context, walletID int64, amount float64) error {
+func (r *WalletRepository) UnlockAmount(ctx context.Context, walletID int64, amount decimal.Decimal) error {
 	var wallet domain.Wallet
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
 		return err
@@ -167,8 +168,8 @@ func (r *WalletRepository) UnlockAmount(ctx context.Context, walletID int64, amo
 	if err != nil {
 		return err
 	}
-	wallet.Locked -= amount
-	wallet.Balance += amount
+	wallet.Locked = wallet.Locked.Sub(amount)
+	wallet.Balance = wallet.Balance.Add(amount)
 	wallet.UpdatedAt = updatedAt
 	r.cacheService.SetWallet(&wallet)
 	return nil
@@ -178,7 +179,7 @@ func (r *WalletRepository) UnlockAmount(ctx context.Context, walletID int64, amo
 // fromAmount: the original amount that was locked at order creation.
 // agreedFromAmount: the actual amount to consume (may differ from fromAmount).
 // Effect: locked -= fromAmount, balance += (fromAmount - agreedFromAmount).
-func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int64, fromAmount, agreedFromAmount float64) error {
+func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int64, fromAmount, agreedFromAmount decimal.Decimal) error {
 	var wallet domain.Wallet
 	if err := r.db.GetContext(ctx, &wallet, queries.WalletGetForUpdateQuery, walletID); err != nil {
 		return err
@@ -191,8 +192,8 @@ func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int6
 	if err != nil {
 		return err
 	}
-	wallet.Locked -= fromAmount
-	wallet.Balance += (fromAmount - agreedFromAmount)
+	wallet.Locked = wallet.Locked.Sub(fromAmount)
+	wallet.Balance = wallet.Balance.Add(fromAmount.Sub(agreedFromAmount))
 	wallet.UpdatedAt = updatedAt
 	r.cacheService.SetWallet(&wallet)
 	return nil
@@ -200,7 +201,7 @@ func (r *WalletRepository) FinalizeFromLocked(ctx context.Context, walletID int6
 
 // AtomicCredit increments wallet balance by amount using a single SQL UPDATE.
 // Never use UpdateBalance for deposits — it reads first, then writes (race condition).
-func (r *WalletRepository) AtomicCredit(ctx context.Context, walletID int64, amount float64) error {
+func (r *WalletRepository) AtomicCredit(ctx context.Context, walletID int64, amount decimal.Decimal) error {
 	var updatedAt time.Time
 	err := r.db.QueryRowContext(ctx, queries.WalletAddBalanceQuery, amount, walletID).Scan(&updatedAt)
 	if err != nil {
@@ -212,7 +213,7 @@ func (r *WalletRepository) AtomicCredit(ctx context.Context, walletID int64, amo
 
 // RecordDeposit atomically creates a completed deposit transaction record and credits
 // the wallet in a single DB transaction. A crash between the two writes is impossible.
-func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID int64, amount float64, txHash *string) (*domain.Transaction, error) {
+func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID int64, amount decimal.Decimal, txHash *string) (*domain.Transaction, error) {
 	dbTx, err := r.db.BeginTx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -224,7 +225,7 @@ func (r *WalletRepository) RecordDeposit(ctx context.Context, userID, walletID i
 		WalletID: walletID,
 		Type:     domain.TransactionTypeDeposit,
 		Amount:   amount,
-		Fee:      0,
+		Fee:      decimal.Zero,
 		Status:   domain.TransactionStatusCompleted,
 		TxHash:   txHash,
 	}

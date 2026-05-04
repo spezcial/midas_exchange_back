@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type Currency struct {
@@ -16,13 +18,13 @@ type Currency struct {
 }
 
 type Wallet struct {
-	ID         int64     `db:"id" json:"id"`
-	UserID     int64     `db:"user_id" json:"user_id"`
-	CurrencyID int32     `db:"currency_id" json:"currency_id"`
-	Balance    float64   `db:"balance" json:"balance"`
-	Locked     float64   `db:"locked" json:"locked"`
-	CreatedAt  time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at" json:"updated_at"`
+	ID         int64           `db:"id" json:"id"`
+	UserID     int64           `db:"user_id" json:"user_id"`
+	CurrencyID int32           `db:"currency_id" json:"currency_id"`
+	Balance    decimal.Decimal `db:"balance" json:"balance"`
+	Locked     decimal.Decimal `db:"locked" json:"locked"`
+	CreatedAt  time.Time       `db:"created_at" json:"created_at"`
+	UpdatedAt  time.Time       `db:"updated_at" json:"updated_at"`
 }
 
 type WalletWithCurrency struct {

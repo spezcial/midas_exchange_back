@@ -10,6 +10,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/domain"
 	"github.com/caspianex/exchange-backend/pkg/cache"
 	"github.com/caspianex/exchange-backend/pkg/database"
+	"github.com/shopspring/decimal"
 )
 
 // validGranularities guards against SQL injection in the analytics query.
@@ -266,7 +267,7 @@ func (r *OTCRepository) Take(ctx context.Context, orderID, operatorID int64) err
 	return err
 }
 
-func (r *OTCRepository) Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt float64, deadline time.Time) error {
+func (r *OTCRepository) Agree(ctx context.Context, orderID int64, rate, fromAmt, toAmt decimal.Decimal, deadline time.Time) error {
 	var updatedAt time.Time
 	return r.db.QueryRowContext(ctx, queries.OTCOrderAgreeQuery, rate, fromAmt, toAmt, deadline, orderID).Scan(&updatedAt)
 }
@@ -330,7 +331,7 @@ func (r *OTCRepository) MarkMessagesRead(ctx context.Context, orderID, readerID 
 func (r *OTCRepository) CompleteOrderAtomic(
 	ctx context.Context,
 	orderID, fromWalletID, toWalletID, userID int64,
-	fromAmount, agreedFromAmount, toAmount float64,
+	fromAmount, agreedFromAmount, toAmount decimal.Decimal,
 	orderUID string,
 ) error {
 	tx, err := r.db.BeginTx(ctx)
@@ -364,13 +365,13 @@ func (r *OTCRepository) CompleteOrderAtomic(
 	for _, row := range []struct {
 		walletID int64
 		txType   string
-		amount   float64
+		amount   decimal.Decimal
 	}{
 		{fromWalletID, string(domain.TransactionTypeOTCDebit), agreedFromAmount},
 		{toWalletID, string(domain.TransactionTypeOTCCredit), toAmount},
 	} {
 		err = tx.QueryRowContext(ctx, queries.TransactionCreateQuery,
-			userID, row.walletID, row.txType, row.amount, 0.0,
+			userID, row.walletID, row.txType, row.amount, decimal.Zero,
 			string(domain.TransactionStatusCompleted), orderUID,
 		).Scan(&recID, &createdAt, &updatedAt)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"github.com/caspianex/exchange-backend/internal/api/middleware"
 	"github.com/caspianex/exchange-backend/internal/service"
 	"github.com/go-chi/chi/v5"
+	"github.com/shopspring/decimal"
 )
 
 type OTCHandler struct {
@@ -20,11 +21,11 @@ func NewOTCHandler(otcService *service.OTCService, broadcaster service.OTCBroadc
 }
 
 type createOTCOrderRequest struct {
-	FromCurrencyID int64   `json:"from_currency_id"`
-	ToCurrencyID   int64   `json:"to_currency_id"`
-	FromAmount     float64 `json:"from_amount"`
-	ProposedRate   float64 `json:"proposed_rate"`
-	Comment        *string `json:"comment"`
+	FromCurrencyID int64           `json:"from_currency_id"`
+	ToCurrencyID   int64           `json:"to_currency_id"`
+	FromAmount     decimal.Decimal `json:"from_amount"`
+	ProposedRate   decimal.Decimal `json:"proposed_rate"`
+	Comment        *string         `json:"comment"`
 }
 
 func (h *OTCHandler) GetActiveConfigs(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +50,7 @@ func (h *OTCHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.FromCurrencyID == 0 || req.ToCurrencyID == 0 || req.FromAmount <= 0 || req.ProposedRate <= 0 {
+	if req.FromCurrencyID == 0 || req.ToCurrencyID == 0 || !req.FromAmount.IsPositive() || !req.ProposedRate.IsPositive() {
 		respondError(w, http.StatusBadRequest, "from_currency_id, to_currency_id, from_amount, and proposed_rate are required")
 		return
 	}
@@ -158,8 +159,8 @@ func (h *OTCHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 type sendOfferRequest struct {
-	OfferRate       float64 `json:"offer_rate"`
-	OfferFromAmount float64 `json:"offer_from_amount"`
+	OfferRate       decimal.Decimal `json:"offer_rate"`
+	OfferFromAmount decimal.Decimal `json:"offer_from_amount"`
 }
 
 func (h *OTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +177,7 @@ func (h *OTCHandler) SendOffer(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.OfferRate <= 0 || req.OfferFromAmount <= 0 {
+	if !req.OfferRate.IsPositive() || !req.OfferFromAmount.IsPositive() {
 		respondError(w, http.StatusBadRequest, "offer_rate and offer_from_amount must be positive")
 		return
 	}

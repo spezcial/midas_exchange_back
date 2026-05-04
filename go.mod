@@ -14,6 +14,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/shopspring/decimal v1.4.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.34.0
 )

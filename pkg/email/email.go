@@ -106,9 +106,9 @@ func (e *EmailService) SendOrderCreatedEmail(to, firstName string, exchange *dom
             <p>Your currency exchange has been completed successfully!</p>
             <div class="info-box">
                 <p><strong>Exchange UID:</strong> <span class="uid">%s</span></p>
-                <p><strong>Amount Exchanged:</strong> %.8f</p>
-                <p><strong>Amount Received:</strong> %.8f (after %.2f%% fee)</p>
-                <p><strong>Exchange Rate:</strong> %.8f</p>
+                <p><strong>Amount Exchanged:</strong> %s</p>
+                <p><strong>Amount Received:</strong> %s (after %s%% fee)</p>
+                <p><strong>Exchange Rate:</strong> %s</p>
             </div>
             <p>The funds have been credited to your wallet.</p>
             <p>Thank you for using CaspianEx!</p>
@@ -117,7 +117,7 @@ func (e *EmailService) SendOrderCreatedEmail(to, firstName string, exchange *dom
     </div>
 </body>
 </html>
-	`, firstName, exchange.UID, exchange.FromAmount, exchange.ToAmountWithFee, exchange.Fee, exchange.ExchangeRate)
+	`, firstName, exchange.UID, exchange.FromAmount.StringFixed(8), exchange.ToAmountWithFee.StringFixed(8), exchange.Fee.StringFixed(2), exchange.ExchangeRate.StringFixed(8))
 
 	return e.SendEmail(to, subject, body)
 }

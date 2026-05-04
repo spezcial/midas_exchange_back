@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/shopspring/decimal"
+)
 
 type OTCNotificationPayload struct {
 	OrderUID     string
@@ -8,8 +12,8 @@ type OTCNotificationPayload struct {
 	ClientName   string
 	FromCurrency string
 	ToCurrency   string
-	FromAmount   float64
-	ProposedRate float64
+	FromAmount   decimal.Decimal
+	ProposedRate decimal.Decimal
 	Status       string
 }
 

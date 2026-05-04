@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+)
 
 // Audit log action constants
 const (
@@ -41,43 +45,43 @@ const (
 )
 
 type OTCOrder struct {
-	ID               int64      `db:"id" json:"id"`
-	UID              string     `db:"uid" json:"uid"`
-	UserID           int64      `db:"user_id" json:"user_id"`
-	OperatorID       *int64     `db:"operator_id" json:"operator_id"`
-	FromCurrencyID   int64      `db:"from_currency_id" json:"from_currency_id"`
-	ToCurrencyID     int64      `db:"to_currency_id" json:"to_currency_id"`
-	FromCurrencyCode string     `db:"from_currency_code" json:"from_currency_code"`
-	ToCurrencyCode   string     `db:"to_currency_code" json:"to_currency_code"`
-	FromAmount       float64    `db:"from_amount" json:"from_amount"`
-	ProposedRate     float64    `db:"proposed_rate" json:"proposed_rate"`
-	AgreedRate       *float64   `db:"agreed_rate" json:"agreed_rate"`
-	AgreedFromAmount *float64   `db:"agreed_from_amount" json:"agreed_from_amount"`
-	ToAmount         *float64   `db:"to_amount" json:"to_amount"`
-	Status           OTCStatus  `db:"status" json:"status"`
-	Comment          *string    `db:"comment" json:"comment"`
-	CancelReason     *string    `db:"cancel_reason" json:"cancel_reason"`
-	CancelledBy      *string    `db:"cancelled_by" json:"cancelled_by"`
-	PaymentDeadline  *time.Time `db:"payment_deadline" json:"payment_deadline"`
-	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
-	UnreadCount      int        `db:"unread_count" json:"unread_count"`
+	ID               int64            `db:"id" json:"id"`
+	UID              string           `db:"uid" json:"uid"`
+	UserID           int64            `db:"user_id" json:"user_id"`
+	OperatorID       *int64           `db:"operator_id" json:"operator_id"`
+	FromCurrencyID   int64            `db:"from_currency_id" json:"from_currency_id"`
+	ToCurrencyID     int64            `db:"to_currency_id" json:"to_currency_id"`
+	FromCurrencyCode string           `db:"from_currency_code" json:"from_currency_code"`
+	ToCurrencyCode   string           `db:"to_currency_code" json:"to_currency_code"`
+	FromAmount       decimal.Decimal  `db:"from_amount" json:"from_amount"`
+	ProposedRate     decimal.Decimal  `db:"proposed_rate" json:"proposed_rate"`
+	AgreedRate       *decimal.Decimal `db:"agreed_rate" json:"agreed_rate"`
+	AgreedFromAmount *decimal.Decimal `db:"agreed_from_amount" json:"agreed_from_amount"`
+	ToAmount         *decimal.Decimal `db:"to_amount" json:"to_amount"`
+	Status           OTCStatus        `db:"status" json:"status"`
+	Comment          *string          `db:"comment" json:"comment"`
+	CancelReason     *string          `db:"cancel_reason" json:"cancel_reason"`
+	CancelledBy      *string          `db:"cancelled_by" json:"cancelled_by"`
+	PaymentDeadline  *time.Time       `db:"payment_deadline" json:"payment_deadline"`
+	CreatedAt        time.Time        `db:"created_at" json:"created_at"`
+	UpdatedAt        time.Time        `db:"updated_at" json:"updated_at"`
+	UnreadCount      int              `db:"unread_count" json:"unread_count"`
 }
 
 type OTCMessage struct {
-	ID              int64           `db:"id" json:"id"`
-	OrderID         int64           `db:"order_id" json:"order_id"`
-	SenderID        int64           `db:"sender_id" json:"sender_id"`
-	SenderRole      string          `db:"sender_role" json:"sender_role"`
-	MessageType     OTCMessageType  `db:"message_type" json:"message_type"`
-	Content         *string         `db:"content" json:"content"`
-	OfferRate       *float64        `db:"offer_rate" json:"offer_rate"`
-	OfferFromAmount *float64        `db:"offer_from_amount" json:"offer_from_amount"`
-	OfferToAmount   *float64        `db:"offer_to_amount" json:"offer_to_amount"`
-	OfferStatus     *OTCOfferStatus `db:"offer_status" json:"offer_status"`
-	IsRead          bool            `db:"is_read" json:"is_read"`
-	ReadAt          *time.Time      `db:"read_at" json:"read_at"`
-	CreatedAt       time.Time       `db:"created_at" json:"created_at"`
+	ID              int64            `db:"id" json:"id"`
+	OrderID         int64            `db:"order_id" json:"order_id"`
+	SenderID        int64            `db:"sender_id" json:"sender_id"`
+	SenderRole      string           `db:"sender_role" json:"sender_role"`
+	MessageType     OTCMessageType   `db:"message_type" json:"message_type"`
+	Content         *string          `db:"content" json:"content"`
+	OfferRate       *decimal.Decimal `db:"offer_rate" json:"offer_rate"`
+	OfferFromAmount *decimal.Decimal `db:"offer_from_amount" json:"offer_from_amount"`
+	OfferToAmount   *decimal.Decimal `db:"offer_to_amount" json:"offer_to_amount"`
+	OfferStatus     *OTCOfferStatus  `db:"offer_status" json:"offer_status"`
+	IsRead          bool             `db:"is_read" json:"is_read"`
+	ReadAt          *time.Time       `db:"read_at" json:"read_at"`
+	CreatedAt       time.Time        `db:"created_at" json:"created_at"`
 }
 
 type OTCConfigWithCurrencies struct {
@@ -87,14 +91,14 @@ type OTCConfigWithCurrencies struct {
 }
 
 type OTCConfig struct {
-	ID                int64     `db:"id" json:"id"`
-	FromCurrencyID    int64     `db:"from_currency_id" json:"from_currency_id"`
-	ToCurrencyID      int64     `db:"to_currency_id" json:"to_currency_id"`
-	MinFromAmount     float64   `db:"min_from_amount" json:"min_from_amount"`
-	PaymentTimeoutMin int       `db:"payment_timeout_min" json:"payment_timeout_min"`
-	IsActive          bool      `db:"is_active" json:"is_active"`
-	CreatedAt         time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt         time.Time `db:"updated_at" json:"updated_at"`
+	ID                int64           `db:"id" json:"id"`
+	FromCurrencyID    int64           `db:"from_currency_id" json:"from_currency_id"`
+	ToCurrencyID      int64           `db:"to_currency_id" json:"to_currency_id"`
+	MinFromAmount     decimal.Decimal `db:"min_from_amount" json:"min_from_amount"`
+	PaymentTimeoutMin int             `db:"payment_timeout_min" json:"payment_timeout_min"`
+	IsActive          bool            `db:"is_active" json:"is_active"`
+	CreatedAt         time.Time       `db:"created_at" json:"created_at"`
+	UpdatedAt         time.Time       `db:"updated_at" json:"updated_at"`
 }
 
 type OTCOrderDetail struct {
@@ -128,41 +132,41 @@ type OTCAuditLog struct {
 
 // OTCOrderExportRow is a flat row used for CSV export (joins currencies + users).
 type OTCOrderExportRow struct {
-	UID              string    `db:"uid"`
-	Status           string    `db:"status"`
-	ClientEmail      string    `db:"client_email"`
-	OperatorEmail    *string   `db:"operator_email"`
-	FromCurrencyCode string    `db:"from_currency_code"`
-	ToCurrencyCode   string    `db:"to_currency_code"`
-	FromAmount       float64   `db:"from_amount"`
-	ProposedRate     float64   `db:"proposed_rate"`
-	AgreedRate       *float64  `db:"agreed_rate"`
-	AgreedFromAmount *float64  `db:"agreed_from_amount"`
-	ToAmount         *float64  `db:"to_amount"`
-	CancelReason     *string   `db:"cancel_reason"`
-	CreatedAt        time.Time `db:"created_at"`
-	UpdatedAt        time.Time `db:"updated_at"`
+	UID              string           `db:"uid"`
+	Status           string           `db:"status"`
+	ClientEmail      string           `db:"client_email"`
+	OperatorEmail    *string          `db:"operator_email"`
+	FromCurrencyCode string           `db:"from_currency_code"`
+	ToCurrencyCode   string           `db:"to_currency_code"`
+	FromAmount       decimal.Decimal  `db:"from_amount"`
+	ProposedRate     decimal.Decimal  `db:"proposed_rate"`
+	AgreedRate       *decimal.Decimal `db:"agreed_rate"`
+	AgreedFromAmount *decimal.Decimal `db:"agreed_from_amount"`
+	ToAmount         *decimal.Decimal `db:"to_amount"`
+	CancelReason     *string          `db:"cancel_reason"`
+	CreatedAt        time.Time        `db:"created_at"`
+	UpdatedAt        time.Time        `db:"updated_at"`
 }
 
 // OTCAnalyticsSummary is the high-level aggregate block in the analytics response.
 type OTCAnalyticsSummary struct {
-	TotalOrders    int64   `json:"total_orders"    db:"total_orders"`
-	Completed      int64   `json:"completed"       db:"completed"`
-	Cancelled      int64   `json:"cancelled"       db:"cancelled"`
-	Expired        int64   `json:"expired"         db:"expired"`
-	ConversionRate float64 `json:"conversion_rate"` // computed after DB scan
-	TotalVolume    float64 `json:"total_volume"    db:"total_volume"`
-	AvgSpreadPct   float64 `json:"avg_spread_pct"  db:"avg_spread_pct"`
+	TotalOrders    int64           `json:"total_orders"    db:"total_orders"`
+	Completed      int64           `json:"completed"       db:"completed"`
+	Cancelled      int64           `json:"cancelled"       db:"cancelled"`
+	Expired        int64           `json:"expired"         db:"expired"`
+	ConversionRate float64         `json:"conversion_rate"` // computed after DB scan, ratio not money
+	TotalVolume    decimal.Decimal `json:"total_volume"    db:"total_volume"`
+	AvgSpreadPct   decimal.Decimal `json:"avg_spread_pct"  db:"avg_spread_pct"`
 }
 
 // OTCAnalyticsPeriod is one bucket in the time-series breakdown.
 type OTCAnalyticsPeriod struct {
-	Period    string  `json:"period"    db:"period"`
-	Total     int64   `json:"total"     db:"total"`
-	Completed int64   `json:"completed" db:"completed"`
-	Cancelled int64   `json:"cancelled" db:"cancelled"`
-	Expired   int64   `json:"expired"   db:"expired"`
-	Volume    float64 `json:"volume"    db:"volume"`
+	Period    string          `json:"period"    db:"period"`
+	Total     int64           `json:"total"     db:"total"`
+	Completed int64           `json:"completed" db:"completed"`
+	Cancelled int64           `json:"cancelled" db:"cancelled"`
+	Expired   int64           `json:"expired"   db:"expired"`
+	Volume    decimal.Decimal `json:"volume"    db:"volume"`
 }
 
 // OTCAnalytics is the full analytics response payload.
