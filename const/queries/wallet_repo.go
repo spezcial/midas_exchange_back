@@ -26,15 +26,6 @@ const (
 		ORDER BY c.code
 `
 
-	WalletGetForUpdateQuery = `SELECT * FROM wallets WHERE id = $1`
-
-	WalletUpdateBalanceQuery = `
-		UPDATE wallets
-		SET balance = $1, locked = $2, updated_at = NOW()
-		WHERE id = $3
-		RETURNING updated_at
-`
-
 	// WalletDeductBalanceQuery atomically deducts amount only if current balance >= amount.
 	// Returns updated_at on success; no row if balance is insufficient (prevents double-spend).
 	WalletDeductBalanceQuery = `
