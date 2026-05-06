@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 
@@ -25,9 +26,11 @@ func NewCryptoGateHandler(cgService *service.CryptoGateService, webhookSecret st
 
 func (h *CryptoGateHandler) verifySecret(r *http.Request) bool {
 	if h.webhookSecret == "" {
-		return true // not configured — allow all (dev mode)
+		return false // fail-closed: empty secret means rejecting all webhooks
 	}
-	return r.Header.Get("X-TOKEN") == h.webhookSecret
+	got := []byte(r.Header.Get("X-TOKEN"))
+	want := []byte(h.webhookSecret)
+	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
 // HandleDeposit handles POST /cg/deposit from crypto-gate.

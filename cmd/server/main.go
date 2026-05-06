@@ -136,6 +136,17 @@ func main() {
 	// Wire up crypto-gate
 	var cgService *service.CryptoGateService
 	if cfg.CryptoGate.BaseURL != "" && cfg.CryptoGate.Token != "" {
+		// Fail-fast: webhook secret must not be empty in production. This is a
+		// belt-and-suspenders guard alongside config.validate() — without it,
+		// CryptoGateHandler.verifySecret() would reject every webhook (fail-closed),
+		// so it is better to refuse to start than to silently break deposits.
+		if cfg.Server.Env == "production" && cfg.CryptoGate.WebhookSecret == "" {
+			log.Error("webhook secret must not be empty in production",
+				"env", cfg.Server.Env,
+				"hint", "set CRYPTO_GATE_WEBHOOK_SECRET")
+			os.Exit(1)
+		}
+
 		cgClient := cryptogate.NewClient(cfg.CryptoGate.BaseURL, cfg.CryptoGate.Token, cfg.CryptoGate.Platform)
 		cgService = service.NewCryptoGateService(cgClient, cfg.CryptoGate.Platform, addrRepo, walletRepo, txRepo, userRepo, twofaService, log)
 		walletService.SetCryptoGateService(cgService)
