@@ -1,0 +1,198 @@
+# golangci-lint configuration for CaspianEx fintech Go backend.
+# Strict baseline tuned for a financial service: emphasize correctness, error
+# handling, security and resource cleanup. Add point-fix exceptions in
+# `issues.exclude-rules` rather than disabling a linter outright.
+run:
+  timeout: 5m
+  go: '1.25'
+  tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gosec
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - gocritic
+    - misspell
+    - nilerr
+    - nilnil
+    - noctx
+    - prealloc
+    - revive
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+    exclude-functions:
+      - (io.Closer).Close
+      - (*database/sql.Rows).Close
+      - (net/http.ResponseWriter).Write
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - fmt.Fprint
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+      - shadow
+
+  gosec:
+    excludes:
+      # G104 (errors unhandled) is covered better by errcheck with our config.
+      - G104
+      # G115 (integer overflow in conversions) — too noisy on legacy code; revisit later.
+      - G115
+    config:
+      G306: "0600"
+
+  gocritic:
+    disabled-checks:
+      - ifElseChain
+      - hugeParam
+      - rangeValCopy
+      - paramTypeCombine
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    settings:
+      captLocal:
+        paramsOnly: true
+
+  revive:
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        disabled: true # too noisy on existing public API; revisit later
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+        disabled: true
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+        disabled: true
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  misspell:
+    locale: US
+
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  nilnil:
+    checked-types:
+      - ptr
+      - func
+      - iface
+      - map
+      - chan
+
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  unused:
+    field-writes-are-uses: true
+    post-statements-are-reads: false
+    exported-fields-are-used: true
+    parameters-are-used: true
+    local-variables-are-used: true
+    generated-is-used: true
+
+  staticcheck:
+    checks:
+      - all
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-dirs:
+    - bin
+    - vendor
+    - migrations
+  exclude-files:
+    - "tools.go"
+  exclude-rules:
+    # Tests get more relaxed rules: long funcs, dup, error wrapping noise.
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - gocritic
+        - prealloc
+        - noctx
+        - bodyclose
+
+    # Generated/seed SQL constants in const/queries — preallocation noise.
+    - path: const/queries/
+      linters:
+        - prealloc
+        - gocritic
+
+    # cmd/server bootstrap is allowed to log.Fatal and use os.Exit.
+    - path: cmd/server/
+      linters:
+        - gocritic
+        - revive
+      text: "deep-exit"
+
+    # Allow TODO/FIXME in legacy code; track via tickets, not lint.
+    - linters:
+        - gocritic
+      text: "commentedOutCode"
+
+    # Some HTTP handlers intentionally write without checking error
+    # (status already committed). Keep noctx but relax for handler bodies.
+    - path: internal/api/
+      linters:
+        - errcheck
+      text: "Error return value of .*Write.* is not checked"
+
+  exclude-use-default: false
+  fix: false
+
+severity:
+  default-severity: error
+  case-sensitive: false

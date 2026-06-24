@@ -1,4 +1,4 @@
-.PHONY: help up down restart logs app-refresh build clean db-migrate db-reset db-shell db-exec db-deactivate-unsupported-currencies db-clear-users test fmt vet
+.PHONY: help up down restart logs app-refresh build clean db-migrate db-reset db-shell db-exec db-deactivate-unsupported-currencies db-clear-users test fmt vet lint-strict vuln tools-install
 
 # Colors for terminal output
 CYAN := \033[0;36m
@@ -168,6 +168,24 @@ install: ## Install dependencies and setup project
 	@echo "  1. Update .env with your configuration"
 	@echo "  2. Run 'make up' to start services"
 	@echo "  3. Run 'make logs' to view logs"
+
+# Strict Linting & Security Tooling Commands
+tools-install: ## Install dev tools (golangci-lint, staticcheck, govulncheck)
+	@echo "$(CYAN)Installing dev tools...$(NC)"
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+	go install honnef.co/go/tools/cmd/staticcheck@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	@echo "$(GREEN)✓ Dev tools installed (ensure $$(go env GOPATH)/bin is in your PATH)$(NC)"
+
+lint-strict: ## Run golangci-lint with strict ruleset (.golangci.yml)
+	@echo "$(CYAN)Running golangci-lint (strict)...$(NC)"
+	golangci-lint run --timeout=5m ./...
+	@echo "$(GREEN)✓ Strict lint passed$(NC)"
+
+vuln: ## Run govulncheck against all packages
+	@echo "$(CYAN)Running govulncheck...$(NC)"
+	govulncheck ./...
+	@echo "$(GREEN)✓ govulncheck passed$(NC)"
 
 # Default target
 .DEFAULT_GOAL := help

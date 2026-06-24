@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  # Required by some upload-artifact / cache actions for OIDC token exchange.
+  actions: read
+  # Allow govulncheck-action to surface advisory annotations on PRs.
+  pull-requests: read
+  checks: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Build / Test / Lint / Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      GO_VERSION: "1.25"
+      GOLANGCI_LINT_VERSION: "v1.61.0"
+      # Avoid noisy module download progress in CI logs.
+      GOFLAGS: "-buildvcs=false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          check-latest: false
+
+      - name: Print Go environment
+        run: |
+          go version
+          go env
+
+      - name: Download modules
+        run: go mod download
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test (race + coverage)
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: coverage.out
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m
+          # Skip the action's built-in cache if module cache is already
+          # populated by setup-go (avoids cache key collisions).
+          skip-cache: false
+          only-new-issues: false
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: ${{ env.GO_VERSION }}
+          go-package: ./...
+          check-latest: false
